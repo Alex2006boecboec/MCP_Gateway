@@ -63,6 +63,7 @@ class ProxyConfig:
     detector_config: Optional[DetectorConfig] = None  # None = detector disabled
     graph_config: Optional[GraphConfig] = None       # None = graph disabled
     approval_config: Optional[ApprovalConfig] = None  # None = approval disabled
+    shipper: Optional[Any] = None   # Phase 5: CloudShipper or None
 
 
 class Proxy:
@@ -77,7 +78,7 @@ class Proxy:
         self.config = config
         self.policy = PolicyEngine(load_policy(config.policy_path))
         self.redactor = SecretRedactor() if config.redact_secrets else None
-        self.audit = AuditLogger(config.audit_path)
+        self.audit = AuditLogger(config.audit_path, shipper=config.shipper)
         self.detector = Detector(config.detector_config) if config.detector_config else None
         self.graph = CapabilityGraph(config.graph_config) if config.graph_config else None
         self.approval = ApprovalEngine(config.approval_config) if config.approval_config else None

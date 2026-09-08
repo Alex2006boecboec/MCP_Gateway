@@ -2,7 +2,7 @@
 
 **Security gateway for the Model Context Protocol.** Intercepts AI agent tool calls, enforces policy, detects prompt injection, redacts secrets, tracks cross-server data-flow chains, holds high-risk calls for human approval, and writes a tamper-evident audit log.
 
-> ⚠️ **Status: Phase 4 (alpha)** — policy engine, secret redaction, audit logging, transparent proxy, multi-layer injection detection, capability-graph chain detection, and human-in-the-loop approval flow are implemented. Cloud dashboard is planned.
+> ⚠️ **Status: Phase 5 (alpha)** — policy engine, secret redaction, audit logging, transparent proxy, multi-layer injection detection, capability-graph chain detection, human-in-the-loop approval flow, and multi-tenant cloud dashboard with compliance reports are implemented.
 
 ---
 
@@ -22,6 +22,7 @@ MCP Shield is a proxy that sits between the agent and MCP servers, applying a se
 | Cross-server exfiltration | ChainCaps (arXiv), MCP-Lattice | Capability graph + taint tracking ✅ |
 | SSRF | [modelcontextprotocol/servers#4497](https://github.com/modelcontextprotocol/servers/pull/4497) (still open!) | URL validator blocks internal/metadata IPs ✅ |
 | Secret leakage | — | Secret redactor masks AWS/GCP/GitHub/Slack/OpenAI keys ✅ |
+| No central visibility | — | Multi-tenant cloud dashboard with compliance reports ✅ |
 
 ---
 
@@ -46,6 +47,8 @@ mcp-shield \
   --require-approval \
   --approval-dir approvals \
   --approval-timeout 120 \
+  --cloud-url https://shield.example.com \
+  --cloud-key mcp_live_... \
   -- \
   npx -y @modelcontextprotocol/server-filesystem /home/me
 ```
@@ -121,8 +124,9 @@ Gateway pipeline (every tools/call):
   2. Policy Engine     — deterministic allow/deny (YAML rules, fail-closed)
   3. Injection Detector — scan args & responses for prompt injection ✅
   4. Capability Graph  — taint tracking, cross-server chain detection ✅
-  5. Approval Flow     — human-in-the-loop for high-risk calls (planned)
+  5. Approval Flow     — human-in-the-loop for high-risk calls ✅
   6. Audit Logger      — hash-chained JSONL, tamper-evident
+  7. Cloud Shipper     — batch audit events to the cloud dashboard ✅
 ```
 
 **Design principle:** the policy engine is **deterministic** — no LLM is ever consulted for a policy decision. Prompt injection cannot bypass it. LLMs are only used in the optional Layer 4 of the injection detector, never for the final allow/deny.
@@ -185,6 +189,29 @@ approval:
 
 See [`docs/phase4_plan.md`](docs/phase4_plan.md) for the full design.
 
+### Cloud dashboard (Phase 5)
+
+A multi-tenant SaaS dashboard that collects audit events from all your proxies, provides role-based access (admin / analyst / viewer), and generates compliance reports (SOC2, ISO27001, 152-ФЗ).
+
+- **Multi-tenant**: every query is scoped by `org_id` — org A cannot see org B's events.
+- **RBAC**: admin (full access), analyst (events + reports), viewer (events only). Unknown roles are denied by default (fail-closed).
+- **Auth**: password-based (pbkdf2_hmac, stdlib) with signed session cookies (itsdangerous). SSO/OIDC is stubbed (`/sso/login` returns 501 in MVP).
+- **Compliance reports**: SOC2 (security), ISO27001 (Annex A controls), 152-ФЗ (PII exfiltration + approval audit). Downloadable as CSV.
+- **CloudShipper** (proxy side): batches audit events in memory, flushes every 5s or 20 events, retries with exponential backoff, never blocks the proxy. Idempotent (cloud dedupes on `(org_id, seq)`).
+- **Zero new mandatory deps**: cloud server uses FastAPI + Jinja2 + itsdangerous (install via `pip install mcp-shield[cloud]`).
+
+```bash
+# Start the cloud dashboard (first run creates a default admin):
+pip install mcp-shield[cloud]
+mcp-shield-cloud  # → http://127.0.0.1:8000
+# Default login: admin@mcp-shield.local / admin (CHANGE IMMEDIATELY!)
+
+# Point a proxy at the cloud:
+mcp-shield --policy policy.yaml --cloud-url http://127.0.0.1:8000 --cloud-key mcp_live_... -- <server>
+```
+
+See [`docs/phase5_plan.md`](docs/phase5_plan.md) for the full design.
+
 See [`docs/architecture.md`](docs/architecture.md) for the full design.
 
 ---
@@ -197,7 +224,7 @@ See [`docs/architecture.md`](docs/architecture.md) for the full design.
 | 2. Injection detection | ✅ | Regex + heuristics (deterministic); optional embeddings + LLM judge |
 | 3. Capability graph | ✅ | Cross-server taint tracking, chain detection (killer-feature) |
 | 4. Approval flow | ✅ | Slack/Teams webhook for high-risk calls, file-based queue, fail-closed |
-| 5. Cloud dashboard | 🔜 | Multi-tenant, RBAC, SSO, compliance reports (commercial tier) |
+| 5. Cloud dashboard | ✅ | Multi-tenant, RBAC, SSO, compliance reports (commercial tier) |
 
 ---
 

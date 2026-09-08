@@ -1,0 +1,45 @@
+{% extends "base.html" %}
+{% block title %}Dashboard - MCP Shield{% endblock %}
+{% block content %}
+<h2>Security Dashboard</h2>
+<div class="cards">
+  <div class="card"><div class="label">Total calls</div><div class="value">{{ summary.total }}</div></div>
+  <div class="card"><div class="label">Allowed</div><div class="value" style="color:#155724">{{ summary.allow }}</div></div>
+  <div class="card"><div class="label">Denied</div><div class="value" style="color:#721c24">{{ summary.deny }}</div></div>
+</div>
+<form class="filters" method="get" action="/dashboard">
+  <select name="decision">
+    <option value="">All decisions</option>
+    <option value="allow" {% if filters.decision == 'allow' %}selected{% endif %}>Allow</option>
+    <option value="deny" {% if filters.decision == 'deny' %}selected{% endif %}>Deny</option>
+  </select>
+  <input type="text" name="server" placeholder="Server" value="{{ filters.server }}">
+  <input type="text" name="tool" placeholder="Tool" value="{{ filters.tool }}">
+  <input type="text" name="start" placeholder="Start date" value="{{ filters.start }}">
+  <input type="text" name="end" placeholder="End date" value="{{ filters.end }}">
+  <button type="submit" class="btn btn-primary">Filter</button>
+</form>
+<table>
+  <thead>
+    <tr><th>Time</th><th>Decision</th><th>Server</th><th>Tool</th><th>Reason</th><th>Rule</th></tr>
+  </thead>
+  <tbody>
+    {% for ev in events %}
+    <tr onclick="window.location='/events/{{ ev.id }}'" style="cursor:pointer">
+      <td>{{ ev.ts }}</td>
+      <td><span class="badge badge-{{ ev.decision }}">{{ ev.decision }}</span></td>
+      <td>{{ ev.server }}</td>
+      <td>{{ ev.tool }}</td>
+      <td>{{ ev.reason }}</td>
+      <td>{{ ev.rule }}</td>
+    </tr>
+    {% endfor %}
+    {% if not events %}
+    <tr><td colspan="6" style="text-align:center;color:#999;padding:24px">No events found</td></tr>
+    {% endif %}
+  </tbody>
+</table>
+{% if has_next %}
+<p style="margin-top:16px"><a href="/dashboard?page={{ page + 1 }}{% if filters.decision %}&decision={{ filters.decision }}{% endif %}{% if filters.server %}&server={{ filters.server }}{% endif %}">Next page &rarr;</a></p>
+{% endif %}
+{% endblock %}

@@ -1,0 +1,11 @@
+{% extends "base.html" %}
+{% block title %}Reports - MCP Shield{% endblock %}
+{% block content %}
+<h2>Compliance Reports</h2>
+<p>Select a framework to generate a report for your organization.</p>
+<ul>
+  {% for fw in frameworks %}
+  <li style="margin:8px 0"><a href="/reports/{{ fw }}">{{ fw }}</a></li>
+  {% endfor %}
+</ul>
+{% endblock %}

@@ -37,6 +37,13 @@ detector = [
     "uvicorn>=0.24",
     "httpx>=0.25",
 ]
+cloud = [
+    "fastapi>=0.104",
+    "uvicorn>=0.24",
+    "jinja2>=3.1",
+    "itsdangerous>=2.1",
+    "python-multipart>=0.0.6",
+]
 test = [
     "pytest>=7.4",
     "pytest-asyncio>=0.21",
@@ -44,6 +51,7 @@ test = [
 
 [project.scripts]
 mcp-shield = "mcp_shield.cli:main"
+mcp-shield-cloud = "mcp_shield.cloud.server:main"
 
 [project.urls]
 Homepage = "https://github.com/Alex2006boecboec/mcp-shield"
@@ -52,6 +60,9 @@ Documentation = "https://github.com/Alex2006boecboec/mcp-shield#readme"
 [tool.setuptools.packages.find]
 where = ["."]
 include = ["mcp_shield*"]
+
+[tool.setuptools.package-data]
+mcp_shield = ["cloud/templates/*.html"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

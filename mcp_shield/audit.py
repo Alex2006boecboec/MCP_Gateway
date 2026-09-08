@@ -66,12 +66,17 @@ class AuditEntry:
 
 
 class AuditLogger:
-    """Append-only JSONL audit log with hash chaining."""
+    """Append-only JSONL audit log with hash chaining.
 
-    def __init__(self, path: str | Path):
+    Phase 5: optionally ships each entry to the cloud dashboard via a
+    CloudShipper. The shipper is best-effort and never blocks the proxy.
+    """
+
+    def __init__(self, path: str | Path, shipper=None):
         self.path = Path(path)
         self._seq = 0
         self._prev_hash = ZERO_HASH
+        self._shipper = shipper
         # If the log exists, resume the chain from the last entry.
         self._resume()
 
@@ -123,6 +128,12 @@ class AuditLogger:
         self._append(entry)
         self._seq = entry.seq
         self._prev_hash = entry.this_hash
+        # Phase 5: ship to cloud (best-effort, never raises).
+        if self._shipper is not None:
+            try:
+                self._shipper.ship(asdict(entry))
+            except Exception:
+                pass  # never let shipping break the proxy
         return entry
 
     def _append(self, entry: AuditEntry) -> None:

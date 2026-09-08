@@ -39,6 +39,7 @@ from mcp_shield.approval import ApprovalConfig, RiskRule
 from mcp_shield.detector import DetectorConfig
 from mcp_shield.graph import GraphConfig
 from mcp_shield.proxy import Proxy, ProxyConfig
+from mcp_shield.shipper import CloudShipper, CloudShipperConfig
 
 
 def _load_approval_from_policy(policy_path: Path) -> dict[str, Any] | None:
@@ -105,6 +106,19 @@ def _build_approval_config(
     return cfg
 
 
+def _build_shipper(cloud_url: str | None, cloud_key: str | None) -> CloudShipper | None:
+    """Build a CloudShipper from CLI flags. Returns None if cloud shipping is disabled."""
+    if not cloud_url and not cloud_key:
+        return None
+    if not cloud_url or not cloud_key:
+        raise SystemExit("error: --cloud-url and --cloud-key must both be set (or both omitted)")
+    return CloudShipper(CloudShipperConfig(
+        enabled=True,
+        url=cloud_url,
+        api_key=cloud_key,
+    ))
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         prog="mcp-shield",
@@ -138,6 +152,13 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--approval-webhook", default=None,
                         help="Slack/Teams incoming webhook URL for approval notifications. "
                         "Optional; the file queue works without it.")
+    parser.add_argument("--cloud-url", default=None,
+                        help="Phase 5: URL of the MCP Shield cloud dashboard "
+                        "(e.g. https://shield.example.com). Enables shipping audit "
+                        "events to the cloud. Requires --cloud-key.")
+    parser.add_argument("--cloud-key", default=None,
+                        help="Phase 5: API key for the cloud dashboard. Get it from "
+                        "the dashboard's API Keys page.")
     parser.add_argument("--log-level", default="INFO",
                         choices=["DEBUG", "INFO", "WARNING", "ERROR"])
     # Everything after `--` is the MCP server command.
@@ -174,6 +195,7 @@ def main(argv: list[str] | None = None) -> int:
             timeout=args.approval_timeout,
             webhook=args.approval_webhook,
         ),
+        shipper=_build_shipper(args.cloud_url, args.cloud_key),
     )
     proxy = Proxy(config)
     return proxy.run()

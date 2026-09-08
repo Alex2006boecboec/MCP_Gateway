@@ -1,0 +1,24 @@
+{% extends "base.html" %}
+{% block title %}Users - MCP Shield{% endblock %}
+{% block content %}
+<h2>Users</h2>
+<table>
+  <thead><tr><th>Email</th><th>Role</th><th>Created</th></tr></thead>
+  <tbody>
+    {% for u in users %}
+    <tr><td>{{ u.email }}</td><td>{{ u.role }}</td><td>{{ u.created_at }}</td></tr>
+    {% endfor %}
+  </tbody>
+</table>
+<h3>Add User</h3>
+<form method="post" action="/users">
+  <input type="email" name="email" placeholder="Email" required>
+  <input type="password" name="password" placeholder="Password" required>
+  <select name="role">
+    <option value="viewer">Viewer</option>
+    <option value="analyst">Analyst</option>
+    <option value="admin">Admin</option>
+  </select>
+  <button type="submit" class="btn btn-primary">Add</button>
+</form>
+{% endblock %}

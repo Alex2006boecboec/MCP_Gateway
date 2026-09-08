@@ -1,0 +1,49 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>{% block title %}MCP Shield{% endblock %}</title>
+  <style>
+    body { font-family: system-ui, sans-serif; margin: 0; padding: 0; background: #f5f5f5; color: #222; }
+    .nav { background: #1a1a2e; padding: 12px 24px; display: flex; gap: 20px; align-items: center; }
+    .nav a { color: #e0e0e0; text-decoration: none; font-size: 14px; }
+    .nav a:hover { color: #fff; }
+    .nav .brand { font-weight: bold; font-size: 16px; color: #fff; }
+    .container { max-width: 1200px; margin: 24px auto; padding: 0 24px; }
+    .cards { display: flex; gap: 16px; flex-wrap: wrap; margin-bottom: 24px; }
+    .card { background: #fff; border-radius: 8px; padding: 16px 24px; box-shadow: 0 1px 3px rgba(0,0,0,0.1); min-width: 140px; }
+    .card .label { font-size: 12px; color: #666; text-transform: uppercase; }
+    .card .value { font-size: 28px; font-weight: bold; margin-top: 4px; }
+    table { width: 100%; border-collapse: collapse; background: #fff; border-radius: 8px; overflow: hidden; box-shadow: 0 1px 3px rgba(0,0,0,0.1); }
+    th, td { padding: 10px 16px; text-align: left; border-bottom: 1px solid #eee; font-size: 14px; }
+    th { background: #f0f0f0; font-weight: 600; }
+    tr:hover { background: #fafafa; }
+    .badge { padding: 2px 8px; border-radius: 4px; font-size: 12px; font-weight: 600; }
+    .badge-allow { background: #d4edda; color: #155724; }
+    .badge-deny { background: #f8d7da; color: #721c24; }
+    .filters { display: flex; gap: 12px; margin-bottom: 20px; flex-wrap: wrap; }
+    .filters input, .filters select { padding: 6px 10px; border: 1px solid #ccc; border-radius: 4px; font-size: 14px; }
+    .btn { padding: 6px 16px; border: none; border-radius: 4px; cursor: pointer; font-size: 14px; }
+    .btn-primary { background: #0d6efd; color: #fff; }
+    .btn-danger { background: #dc3545; color: #fff; }
+    .error { color: #dc3545; margin: 12px 0; }
+    .detail-section { background: #fff; border-radius: 8px; padding: 20px; margin-bottom: 16px; box-shadow: 0 1px 3px rgba(0,0,0,0.1); }
+    .detail-section h3 { margin-top: 0; }
+    pre { background: #f5f5f5; padding: 12px; border-radius: 4px; overflow-x: auto; font-size: 13px; }
+  </style>
+</head>
+<body>
+  <nav class="nav">
+    <span class="brand">MCP Shield</span>
+    <a href="/dashboard">Dashboard</a>
+    <a href="/reports">Reports</a>
+    <a href="/users">Users</a>
+    <a href="/keys">API Keys</a>
+    <a href="/logout">Logout</a>
+  </nav>
+  <div class="container">
+    {% block content %}{% endblock %}
+  </div>
+</body>
+</html>

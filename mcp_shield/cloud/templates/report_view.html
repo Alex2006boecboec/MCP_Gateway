@@ -1,0 +1,28 @@
+{% extends "base.html" %}
+{% block title %}{{ report.title }} - MCP Shield{% endblock %}
+{% block content %}
+<h2>{{ report.title }}</h2>
+<p>Period: {{ report.period.start }} to {{ report.period.end }}</p>
+<div class="cards">
+  {% for card in report.summary_cards %}
+  <div class="card"><div class="label">{{ card.label }}</div><div class="value">{{ card.value }}</div></div>
+  {% endfor %}
+</div>
+{% for section in report.rows %}
+<div class="detail-section">
+  <h3>{{ section.category }}</h3>
+  <table>
+    {% for item in section["items"] %}
+    <tr>
+      {% if item is iterable and item is not string %}
+        {% for val in item %}<td>{{ val }}</td>{% endfor %}
+      {% else %}
+        <td>{{ item }}</td>
+      {% endif %}
+    </tr>
+    {% endfor %}
+  </table>
+</div>
+{% endfor %}
+<p><a href="/reports/{{ report.framework }}/download" class="btn btn-primary">Download CSV</a> &nbsp; <a href="/reports">&larr; Back to reports</a></p>
+{% endblock %}

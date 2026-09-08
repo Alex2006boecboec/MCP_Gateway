@@ -1,0 +1,30 @@
+{% extends "base.html" %}
+{% block title %}API Keys - MCP Shield{% endblock %}
+{% block content %}
+<h2>API Keys</h2>
+<p>Use these keys to configure proxies with <code>--cloud-key</code>.</p>
+<table>
+  <thead><tr><th>Key</th><th>Label</th><th>Revoked</th><th>Actions</th></tr></thead>
+  <tbody>
+    {% for k in keys %}
+    <tr>
+      <td><code>{{ k.key }}</code></td>
+      <td>{{ k.label }}</td>
+      <td>{% if k.revoked %}Yes{% else %}No{% endif %}</td>
+      <td>
+        {% if not k.revoked %}
+        <form method="post" action="/keys/{{ k.key }}/revoke" style="display:inline">
+          <button type="submit" class="btn btn-danger">Revoke</button>
+        </form>
+        {% endif %}
+      </td>
+    </tr>
+    {% endfor %}
+  </tbody>
+</table>
+<h3>Create Key</h3>
+<form method="post" action="/keys">
+  <input type="text" name="label" placeholder="Label (e.g. prod-proxy-1)" required>
+  <button type="submit" class="btn btn-primary">Create</button>
+</form>
+{% endblock %}
