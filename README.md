@@ -1,8 +1,8 @@
 # MCP Shield
 
-**Security gateway for the Model Context Protocol.** Intercepts AI agent tool calls, enforces policy, detects prompt injection, redacts secrets, and writes a tamper-evident audit log.
+**Security gateway for the Model Context Protocol.** Intercepts AI agent tool calls, enforces policy, detects prompt injection, redacts secrets, tracks cross-server data-flow chains, and writes a tamper-evident audit log.
 
-> ⚠️ **Status: Phase 1 (alpha)** — policy engine, secret redaction, audit logging, transparent proxy. Injection detection and capability graph are stubbed for later phases.
+> ⚠️ **Status: Phase 3 (alpha)** — policy engine, secret redaction, audit logging, transparent proxy, multi-layer injection detection, and capability-graph chain detection are implemented. Approval flow and cloud dashboard are planned.
 
 ---
 
@@ -17,9 +17,9 @@ MCP Shield is a proxy that sits between the agent and MCP servers, applying a se
 | Attack | Real-world example | How we block it |
 |---|---|---|
 | Tool poisoning | [microsoft/autogen#7427](https://github.com/microsoft/autogen/issues/7427) — RCE via unsigned tool definitions | Scan tool descriptions on connect, freeze hash (rug-pull detection) *(planned)* |
-| Prompt injection via response | [anthropics/claude-code#58138](https://github.com/anthropics/claude-code/issues/58138) | Multi-layer detector on every tool response *(planned)* |
+| Prompt injection via response | [anthropics/claude-code#58138](https://github.com/anthropics/claude-code/issues/58138) | Multi-layer detector on every tool response ✅ |
 | Command injection | [railwayapp/railway-mcp-server#19](https://github.com/railwayapp/railway-mcp-server/issues/19) | Argument validators (path / URL / command allowlists) ✅ |
-| Cross-server exfiltration | ChainCaps (arXiv), MCP-Lattice | Capability graph + taint tracking *(planned)* |
+| Cross-server exfiltration | ChainCaps (arXiv), MCP-Lattice | Capability graph + taint tracking ✅ |
 | SSRF | [modelcontextprotocol/servers#4497](https://github.com/modelcontextprotocol/servers/pull/4497) (still open!) | URL validator blocks internal/metadata IPs ✅ |
 | Secret leakage | — | Secret redactor masks AWS/GCP/GitHub/Slack/OpenAI keys ✅ |
 
@@ -42,11 +42,12 @@ mcp-shield \
   --policy policies/default.yaml \
   --audit audit.jsonl \
   --detect-injection \
+  --track-chains \
   -- \
   npx -y @modelcontextprotocol/server-filesystem /home/me
 ```
 
-`--detect-injection` enables prompt injection detection (regex + heuristics, deterministic, no extra deps). Optional ML layers (embeddings + LLM judge) need `pip install mcp-shield[detector]` and are configured via a policy/SDK.
+`--detect-injection` enables prompt injection detection (regex + heuristics, deterministic, no extra deps). `--track-chains` enables the capability graph, which tracks data flow across tool calls and blocks dangerous cross-server chains (e.g. read a secret file then send its contents to an external URL). Optional ML layers (embeddings + LLM judge) need `pip install mcp-shield[detector]` and are configured via a policy/SDK.
 
 ### Claude Desktop config
 
@@ -115,8 +116,8 @@ AI Agent → [MCP SECURITY GATEWAY] → MCP Servers
 Gateway pipeline (every tools/call):
   1. Secret Redactor   — mask secrets in args (before logging/forwarding)
   2. Policy Engine     — deterministic allow/deny (YAML rules, fail-closed)
-  3. Injection Detector — scan args & responses for prompt injection (planned)
-  4. Capability Graph  — taint tracking, cross-server chain detection (planned)
+  3. Injection Detector — scan args & responses for prompt injection ✅
+  4. Capability Graph  — taint tracking, cross-server chain detection ✅
   5. Approval Flow     — human-in-the-loop for high-risk calls (planned)
   6. Audit Logger      — hash-chained JSONL, tamper-evident
 ```
@@ -136,6 +137,27 @@ Gateway pipeline (every tools/call):
 
 Layer 0–1 catch 90%+ of injections instantly (microseconds, no ML). Layer 2–3 only run on the ambiguous "suspicious" band (score 0.5–0.9). A confirmed Layer 0 hit blocks immediately without loading any model. See [`docs/phase2_plan.md`](docs/phase2_plan.md) for the full design.
 
+### Capability graph (Phase 3)
+
+The capability graph is what no single-call scanner can see: **cross-server data-flow chains**. It tracks what each tool can do (its *capabilities*) and what sensitive data it read (*taints*), then blocks when a later call sends that data somewhere dangerous.
+
+- **Capabilities**: each tool is tagged with read/write/send/exec capabilities, inferred from its description (with a static registry for well-known MCP servers).
+- **Taints**: when a read call returns a secret (detected via the redactor's in-memory matches, sensitive file paths, or env-var lines), a *taint* is created — a fingerprint of the secret value (sha256, truncated). **The secret itself is never stored.**
+- **Chains**: when a later call is a dangerous sink (network send, exec) and its arguments contain a value whose fingerprint matches an active taint, a dangerous chain is detected and blocked.
+
+| Chain rule | Source | Sink | Severity |
+|---|---|---|---|
+| secret-exfiltration | read:secret | network:send | block |
+| env-exfiltration | read:env | network:send | block |
+| secret-to-exec | read:secret | exec:command | block |
+| env-to-exec | read:env | exec:command | block |
+| db-to-exfiltration | read:database | network:send | block |
+| secret-to-write | read:secret | write:filesystem | review |
+| file-to-exec | read:filesystem | exec:command | review |
+| network-to-exec | read:network | exec:command | review |
+
+Memory is bounded (LRU eviction + TTL expiry) and the graph resets on each new agent session. See [`docs/phase3_plan.md`](docs/phase3_plan.md) for the full design.
+
 See [`docs/architecture.md`](docs/architecture.md) for the full design.
 
 ---
@@ -146,7 +168,7 @@ See [`docs/architecture.md`](docs/architecture.md) for the full design.
 |---|---|---|
 | 1. Foundation | ✅ | Proxy, policy engine, secret redaction, audit log, CLI |
 | 2. Injection detection | ✅ | Regex + heuristics (deterministic); optional embeddings + LLM judge |
-| 3. Capability graph | 🔜 | Cross-server taint tracking, chain detection (killer-feature) |
+| 3. Capability graph | ✅ | Cross-server taint tracking, chain detection (killer-feature) |
 | 4. Approval flow | 🔜 | Slack/Teams webhook for high-risk calls |
 | 5. Cloud dashboard | 🔜 | Multi-tenant, RBAC, SSO, compliance reports (commercial tier) |
 

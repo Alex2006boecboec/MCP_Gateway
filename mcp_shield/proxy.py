@@ -32,6 +32,7 @@ from typing import Any, Optional
 
 from mcp_shield.audit import AuditLogger
 from mcp_shield.detector import Detector, DetectorConfig
+from mcp_shield.graph import CapabilityGraph, GraphConfig
 from mcp_shield.policy import PolicyEngine, Decision, load_policy
 from mcp_shield.protocol import (
     ERR_INJECTION_DETECTED,
@@ -56,6 +57,7 @@ class ProxyConfig:
     fail_closed: bool = True    # if True, deny when no rule matches and default is deny
     redact_secrets: bool = True
     detector_config: Optional[DetectorConfig] = None  # None = detector disabled
+    graph_config: Optional[GraphConfig] = None       # None = graph disabled
 
 
 class Proxy:
@@ -72,6 +74,7 @@ class Proxy:
         self.redactor = SecretRedactor() if config.redact_secrets else None
         self.audit = AuditLogger(config.audit_path)
         self.detector = Detector(config.detector_config) if config.detector_config else None
+        self.graph = CapabilityGraph(config.graph_config) if config.graph_config else None
         # The downstream MCP server subprocess.
         self._proc: Optional[subprocess.Popen] = None
 
@@ -175,6 +178,10 @@ class Proxy:
 
     def _inspect_request(self, msg: Message) -> tuple[Decision, Message]:
         """Run the request-side pipeline. Returns (decision, possibly-modified message)."""
+        # New agent session -> reset the capability graph.
+        if msg.method == "initialize" and self.graph is not None:
+            self.graph.reset()
+
         if msg.method not in ("tools/list", "tools/call"):
             # Non-intercepted method — pass through untouched.
             return Decision("allow", "non-intercepted method", "passthrough"), msg
@@ -221,13 +228,31 @@ class Proxy:
         # Attach redactions to the decision so audit can record them.
         # (Decision is a dataclass — we stash via a side channel.)
         processed._redactions = redactions  # type: ignore[attr-defined]
+        processed._redaction_objs = reds if (self.redactor is not None and arguments) else []  # type: ignore[attr-defined]
+
+        # 2b. Capability graph: check if this call is a dangerous sink whose
+        # args match an active taint (cross-call exfiltration chain). Runs
+        # AFTER policy (policy has first say). Only if policy allowed.
+        if decision.action != "deny" and self.graph is not None:
+            try:
+                g_decision, chain = self.graph.check_sink(
+                    msg.id if msg.id is not None else 0, tool, arguments,
+                    request_redactions=processed._redaction_objs,  # type: ignore[attr-defined]
+                )
+                if g_decision.action == "deny":
+                    decision = g_decision
+                    processed._chain = _chain_to_dict(chain) if chain else None  # type: ignore[attr-defined]
+            except Exception as exc:
+                log.warning("graph check_sink error: %s", exc)
+
         return decision, processed
 
     def _inspect_response(self, req: Message, resp: Message) -> tuple[Decision, Message]:
         """Run the response-side pipeline. Returns (decision, possibly-modified message)."""
         # 1. Secret redaction on the response.
+        resp_red_objs: list = []
         if self.redactor is not None and isinstance(resp.result, dict):
-            new_result, _ = self.redactor.redact_dict(resp.result, container="result")
+            new_result, resp_red_objs = self.redactor.redact_dict(resp.result, container="result")
             new_raw = dict(resp.raw)
             new_raw["result"] = new_result
             processed = Message(
@@ -273,6 +298,32 @@ class Proxy:
                     ],
                 }
 
+        # 3. Capability graph (Phase 3).
+        if self.graph is not None and isinstance(processed.result, dict):
+            try:
+                if req.method == "tools/list":
+                    # Register each tool's capabilities from its description.
+                    tools = processed.result.get("tools", []) if isinstance(processed.result, dict) else []
+                    for t in tools:
+                        if isinstance(t, dict):
+                            self.graph.register_tool(
+                                str(t.get("name", "")),
+                                str(t.get("description", "")),
+                            )
+                elif req.method == "tools/call":
+                    # Record this call as a potential sensitive source.
+                    req_args = self._extract_args(req)
+                    resp_text = " ".join(_extract_text(processed.result))
+                    self.graph.record_source(
+                        req.id if req.id is not None else 0,
+                        str((req.params or {}).get("name", (req.params or {}).get("tool", "unknown"))),
+                        req_args,
+                        response_redactions=resp_red_objs,
+                        response_text=resp_text,
+                    )
+            except Exception as exc:
+                log.warning("graph response hook error: %s", exc)
+
         return Decision("allow", "response passthrough", "passthrough"), processed
 
     # --------------------------------------------------------------- audit
@@ -280,6 +331,7 @@ class Proxy:
     def _audit(self, req: Message, decision: Decision, processed: Message, *, blocked: bool) -> None:
         redactions = getattr(processed, "_redactions", [])  # type: ignore[attr-defined]
         detection = getattr(processed, "_detection", None)  # type: ignore[attr-defined]
+        chain = getattr(processed, "_chain", None)  # type: ignore[attr-defined]
         params = req.params or {}
         self.audit.log(
             decision=decision.action,
@@ -291,6 +343,7 @@ class Proxy:
             rule=decision.rule_name,
             redactions=redactions,
             detection=detection,
+            chain=chain,
         )
 
     def _audit_response(self, req: Message, decision: Decision, processed: Message, *, blocked: bool) -> None:
@@ -336,3 +389,18 @@ def _extract_text(result: dict) -> list[str]:
                 if "description" in item and isinstance(item["description"], str):
                     texts.append(item["description"])
     return texts
+
+
+def _chain_to_dict(chain) -> dict:
+    """Serialize a graph Chain to a dict for the audit log."""
+    if chain is None:
+        return None
+    return {
+        "source_call_id": chain.source_call_id,
+        "source_tool": chain.source_tool,
+        "sink_call_id": chain.sink_call_id,
+        "sink_tool": chain.sink_tool,
+        "label": chain.label,
+        "sink_capability": chain.sink_capability,
+        "rule_name": chain.rule_name,
+    }

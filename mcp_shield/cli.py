@@ -33,6 +33,7 @@ import sys
 from pathlib import Path
 
 from mcp_shield.detector import DetectorConfig
+from mcp_shield.graph import GraphConfig
 from mcp_shield.proxy import Proxy, ProxyConfig
 
 
@@ -52,6 +53,10 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--detect-injection", action="store_true", default=False,
                         help="Enable prompt injection detection (regex + heuristics). "
                         "Optional ML layers require the [detector] pip extra.")
+    parser.add_argument("--track-chains", action="store_true", default=False,
+                        help="Enable the capability graph: track data flow across tool "
+                        "calls and block dangerous cross-server chains (e.g. read a "
+                        "secret then send it externally).")
     parser.add_argument("--log-level", default="INFO",
                         choices=["DEBUG", "INFO", "WARNING", "ERROR"])
     # Everything after `--` is the MCP server command.
@@ -80,6 +85,7 @@ def main(argv: list[str] | None = None) -> int:
         fail_closed=args.fail_closed,
         redact_secrets=not args.no_redact,
         detector_config=DetectorConfig() if args.detect_injection else None,
+        graph_config=GraphConfig() if args.track_chains else None,
     )
     proxy = Proxy(config)
     return proxy.run()
