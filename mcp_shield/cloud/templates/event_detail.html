@@ -1,39 +1,48 @@
 {% extends "base.html" %}
-{% block title %}Event {{ event.id }} - MCP Shield{% endblock %}
+{% block title %}Event #{{ event.id }} - MCP Shield{% endblock %}
 {% block content %}
-<h2>Event #{{ event.id }}</h2>
-<div class="detail-section">
+<div class="page-header">
+  <h1>Event #{{ event.id }}</h1>
+  <p>Detailed view of a single tool call decision</p>
+</div>
+
+<div class="panel">
   <h3>Overview</h3>
   <table>
-    <tr><td><strong>Time</strong></td><td>{{ event.ts }}</td></tr>
-    <tr><td><strong>Decision</strong></td><td><span class="badge badge-{{ event.decision }}">{{ event.decision }}</span></td></tr>
-    <tr><td><strong>Server</strong></td><td>{{ event.server }}</td></tr>
-    <tr><td><strong>Tool</strong></td><td>{{ event.tool }}</td></tr>
-    <tr><td><strong>Reason</strong></td><td>{{ event.reason }}</td></tr>
-    <tr><td><strong>Rule</strong></td><td>{{ event.rule }}</td></tr>
+    <tr><td style="color: var(--text-dim); width: 140px;">Time</td><td style="font-family: monospace;">{{ event.ts }}</td></tr>
+    <tr><td style="color: var(--text-dim);">Decision</td><td><span class="badge badge-{{ event.decision }}">{{ event.decision }}</span></td></tr>
+    <tr><td style="color: var(--text-dim);">Server</td><td>{{ event.server }}</td></tr>
+    <tr><td style="color: var(--text-dim);">Tool</td><td><code>{{ event.tool }}</code></td></tr>
+    <tr><td style="color: var(--text-dim);">Reason</td><td>{{ event.reason }}</td></tr>
+    <tr><td style="color: var(--text-dim);">Rule</td><td style="color: var(--text-muted);">{{ event.rule }}</td></tr>
   </table>
 </div>
-<div class="detail-section">
-  <h3>Arguments (redacted)</h3>
+
+<div class="panel">
+  <h3>Arguments <span style="color: var(--text-muted); font-size: 13px; font-weight: 400;">(secrets redacted)</span></h3>
   <pre>{{ event.args | tojson(indent=2) }}</pre>
 </div>
+
 {% if event.detection %}
-<div class="detail-section">
-  <h3>Detection (Phase 2)</h3>
+<div class="panel">
+  <h3>Detection <span style="color: var(--text-muted); font-size: 13px; font-weight: 400;">Phase 2 — Injection Detector</span></h3>
   <pre>{{ event.detection | tojson(indent=2) }}</pre>
 </div>
 {% endif %}
+
 {% if event.chain %}
-<div class="detail-section">
-  <h3>Chain (Phase 3)</h3>
+<div class="panel">
+  <h3>Chain <span style="color: var(--text-muted); font-size: 13px; font-weight: 400;">Phase 3 — Capability Graph</span></h3>
   <pre>{{ event.chain | tojson(indent=2) }}</pre>
 </div>
 {% endif %}
+
 {% if event.approval %}
-<div class="detail-section">
-  <h3>Approval (Phase 4)</h3>
+<div class="panel">
+  <h3>Approval <span style="color: var(--text-muted); font-size: 13px; font-weight: 400;">Phase 4 — Human-in-the-Loop</span></h3>
   <pre>{{ event.approval | tojson(indent=2) }}</pre>
 </div>
 {% endif %}
-<p><a href="/dashboard">&larr; Back to dashboard</a></p>
+
+<a href="/dashboard" class="back-link">← Back to dashboard</a>
 {% endblock %}

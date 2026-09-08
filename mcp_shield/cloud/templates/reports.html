@@ -1,11 +1,26 @@
 {% extends "base.html" %}
 {% block title %}Reports - MCP Shield{% endblock %}
 {% block content %}
-<h2>Compliance Reports</h2>
-<p>Select a framework to generate a report for your organization.</p>
-<ul>
+<div class="page-header">
+  <h1>Compliance Reports</h1>
+  <p>Generate audit reports mapped to industry compliance frameworks</p>
+</div>
+
+<div class="cards" style="grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));">
   {% for fw in frameworks %}
-  <li style="margin:8px 0"><a href="/reports/{{ fw }}">{{ fw }}</a></li>
+  <a href="/reports/{{ fw }}" style="text-decoration: none; color: inherit;">
+    <div class="card" style="cursor: pointer;">
+      <div style="font-size: 28px; margin-bottom: 12px;">📋</div>
+      <div style="font-size: 18px; font-weight: 700; margin-bottom: 4px; text-transform: uppercase;">
+        {{ fw }}
+      </div>
+      <div style="color: var(--text-muted); font-size: 13px;">
+        {% if fw == 'soc2' %}Security & access control audit{% endif %}
+        {% if fw == 'iso27001' %}Information security — Annex A controls{% endif %}
+        {% if fw == '152fz' %}Russian personal data law — PII tracking{% endif %}
+      </div>
+    </div>
+  </a>
   {% endfor %}
-</ul>
+</div>
 {% endblock %}

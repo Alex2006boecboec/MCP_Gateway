@@ -170,3 +170,94 @@ def test_cross_org_isolation(app_and_client, tmp_path):
     _login(c, "admin@acme.com")
     resp = c.get("/dashboard", follow_redirects=False)
     assert "secret_tool" not in resp.text  # org B's events not visible
+
+
+# ----------------------------------------------------------- registration
+
+
+def test_register_page_loads(app_and_client):
+    c, *_ = app_and_client
+    resp = c.get("/register", follow_redirects=False)
+    assert resp.status_code == 200
+    assert "Create" in resp.text or "register" in resp.text.lower()
+
+
+def test_register_creates_new_org(app_and_client):
+    """Self-service registration creates a new org + admin user."""
+    c, db, *_ = app_and_client
+    resp = c.post("/register", data={
+        "org_name": "NewCorp",
+        "email": "admin@newcorp.com",
+        "password": "securepass123",
+    }, follow_redirects=False)
+    assert resp.status_code == 302
+    assert resp.headers["location"] == "/dashboard"
+    # Session cookie set.
+    assert "mcp_shield_session" in resp.headers.get("set-cookie", "")
+    # Org created.
+    user = db.get_user_by_email("admin@newcorp.com")
+    assert user is not None
+    assert user.role == "admin"
+    # The new org is different from the existing one.
+    assert user.org_id != app_and_client[2].id
+
+
+def test_register_short_password_rejected(app_and_client):
+    c, db, *_ = app_and_client
+    resp = c.post("/register", data={
+        "org_name": "NewCorp",
+        "email": "admin@newcorp.com",
+        "password": "short",
+    }, follow_redirects=False)
+    assert resp.status_code == 400
+    assert "at least 8" in resp.text
+    # User NOT created.
+    assert db.get_user_by_email("admin@newcorp.com") is None
+
+
+def test_register_duplicate_email_rejected(app_and_client):
+    c, db, org, admin, *_ = app_and_client
+    resp = c.post("/register", data={
+        "org_name": "AnotherCorp",
+        "email": admin.email,  # already exists
+        "password": "securepass123",
+    }, follow_redirects=False)
+    assert resp.status_code == 400
+    assert "already registered" in resp.text
+
+
+def test_register_empty_org_name_rejected(app_and_client):
+    c, db, *_ = app_and_client
+    resp = c.post("/register", data={
+        "org_name": "   ",
+        "email": "admin@test.com",
+        "password": "securepass123",
+    }, follow_redirects=False)
+    assert resp.status_code == 400
+    assert "required" in resp.text
+
+
+def test_register_auto_login(app_and_client):
+    """After registration, the user is auto-logged-in (session cookie set)."""
+    c, *_ = app_and_client
+    resp = c.post("/register", data={
+        "org_name": "AutoLoginCorp",
+        "email": "admin@autologin.com",
+        "password": "securepass123",
+    }, follow_redirects=False)
+    # Follow the redirect with the session cookie.
+    resp2 = c.get("/dashboard", follow_redirects=False)
+    assert resp2.status_code == 200  # logged in, can see dashboard
+
+
+def test_register_creates_default_api_key(app_and_client):
+    c, db, *_ = app_and_client
+    c.post("/register", data={
+        "org_name": "KeyCorp",
+        "email": "admin@keycorp.com",
+        "password": "securepass123",
+    }, follow_redirects=False)
+    user = db.get_user_by_email("admin@keycorp.com")
+    keys = db.list_api_keys(user.org_id)
+    assert len(keys) == 1
+    assert keys[0].label == "default"

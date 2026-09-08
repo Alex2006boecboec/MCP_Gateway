@@ -1,24 +1,59 @@
 {% extends "base.html" %}
 {% block title %}Users - MCP Shield{% endblock %}
 {% block content %}
-<h2>Users</h2>
-<table>
-  <thead><tr><th>Email</th><th>Role</th><th>Created</th></tr></thead>
-  <tbody>
-    {% for u in users %}
-    <tr><td>{{ u.email }}</td><td>{{ u.role }}</td><td>{{ u.created_at }}</td></tr>
-    {% endfor %}
-  </tbody>
-</table>
-<h3>Add User</h3>
-<form method="post" action="/users">
-  <input type="email" name="email" placeholder="Email" required>
-  <input type="password" name="password" placeholder="Password" required>
-  <select name="role">
-    <option value="viewer">Viewer</option>
-    <option value="analyst">Analyst</option>
-    <option value="admin">Admin</option>
-  </select>
-  <button type="submit" class="btn btn-primary">Add</button>
-</form>
+<div class="page-header">
+  <h1>Users</h1>
+  <p>Manage who can access this organization's dashboard</p>
+</div>
+
+<div class="table-wrap" style="margin-bottom: 32px;">
+  <table>
+    <thead>
+      <tr>
+        <th>Email</th>
+        <th>Role</th>
+        <th>Created</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for u in users %}
+      <tr>
+        <td>{{ u.email }}</td>
+        <td>
+          {% if u.role == 'admin' %}<span class="badge badge-approve">{{ u.role }}</span>
+          {% elif u.role == 'analyst' %}<span class="badge badge-allow">{{ u.role }}</span>
+          {% else %}<span class="badge badge-deny">{{ u.role }}</span>{% endif %}
+        </td>
+        <td style="color: var(--text-muted); font-family: monospace; font-size: 13px;">{{ u.created_at | round(0) }}</td>
+      </tr>
+      {% endfor %}
+      {% if not users %}
+      <tr><td colspan="3"><div class="empty">No users yet</div></td></tr>
+      {% endif %}
+    </tbody>
+  </table>
+</div>
+
+<div class="panel">
+  <h3>Add New User</h3>
+  <form method="post" action="/users" style="display: flex; gap: 12px; flex-wrap: wrap; align-items: flex-end;">
+    <div class="form-row" style="flex: 1; min-width: 200px; margin-bottom: 0;">
+      <label>Email</label>
+      <input type="email" name="email" placeholder="newuser@company.com" required>
+    </div>
+    <div class="form-row" style="flex: 1; min-width: 160px; margin-bottom: 0;">
+      <label>Password</label>
+      <input type="password" name="password" placeholder="••••••••" required>
+    </div>
+    <div class="form-row" style="min-width: 140px; margin-bottom: 0;">
+      <label>Role</label>
+      <select name="role">
+        <option value="viewer">Viewer</option>
+        <option value="analyst">Analyst</option>
+        <option value="admin">Admin</option>
+      </select>
+    </div>
+    <button type="submit" class="btn btn-primary">Add User</button>
+  </form>
+</div>
 {% endblock %}

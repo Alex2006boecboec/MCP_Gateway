@@ -5,43 +5,224 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>{% block title %}MCP Shield{% endblock %}</title>
   <style>
-    body { font-family: system-ui, sans-serif; margin: 0; padding: 0; background: #f5f5f5; color: #222; }
-    .nav { background: #1a1a2e; padding: 12px 24px; display: flex; gap: 20px; align-items: center; }
-    .nav a { color: #e0e0e0; text-decoration: none; font-size: 14px; }
-    .nav a:hover { color: #fff; }
-    .nav .brand { font-weight: bold; font-size: 16px; color: #fff; }
-    .container { max-width: 1200px; margin: 24px auto; padding: 0 24px; }
-    .cards { display: flex; gap: 16px; flex-wrap: wrap; margin-bottom: 24px; }
-    .card { background: #fff; border-radius: 8px; padding: 16px 24px; box-shadow: 0 1px 3px rgba(0,0,0,0.1); min-width: 140px; }
-    .card .label { font-size: 12px; color: #666; text-transform: uppercase; }
-    .card .value { font-size: 28px; font-weight: bold; margin-top: 4px; }
-    table { width: 100%; border-collapse: collapse; background: #fff; border-radius: 8px; overflow: hidden; box-shadow: 0 1px 3px rgba(0,0,0,0.1); }
-    th, td { padding: 10px 16px; text-align: left; border-bottom: 1px solid #eee; font-size: 14px; }
-    th { background: #f0f0f0; font-weight: 600; }
-    tr:hover { background: #fafafa; }
-    .badge { padding: 2px 8px; border-radius: 4px; font-size: 12px; font-weight: 600; }
-    .badge-allow { background: #d4edda; color: #155724; }
-    .badge-deny { background: #f8d7da; color: #721c24; }
-    .filters { display: flex; gap: 12px; margin-bottom: 20px; flex-wrap: wrap; }
-    .filters input, .filters select { padding: 6px 10px; border: 1px solid #ccc; border-radius: 4px; font-size: 14px; }
-    .btn { padding: 6px 16px; border: none; border-radius: 4px; cursor: pointer; font-size: 14px; }
-    .btn-primary { background: #0d6efd; color: #fff; }
-    .btn-danger { background: #dc3545; color: #fff; }
-    .error { color: #dc3545; margin: 12px 0; }
-    .detail-section { background: #fff; border-radius: 8px; padding: 20px; margin-bottom: 16px; box-shadow: 0 1px 3px rgba(0,0,0,0.1); }
-    .detail-section h3 { margin-top: 0; }
-    pre { background: #f5f5f5; padding: 12px; border-radius: 4px; overflow-x: auto; font-size: 13px; }
+    :root {
+      --bg: #0f1117;
+      --bg-card: #1a1d29;
+      --bg-hover: #222639;
+      --border: #2a2e3f;
+      --text: #e4e6eb;
+      --text-dim: #8b8fa3;
+      --text-muted: #6b6f80;
+      --primary: #6366f1;
+      --primary-hover: #5457e7;
+      --primary-dim: #4f46e5;
+      --green: #22c55e;
+      --green-bg: rgba(34, 197, 94, 0.12);
+      --red: #ef4444;
+      --red-bg: rgba(239, 68, 68, 0.12);
+      --yellow: #f59e0b;
+      --yellow-bg: rgba(245, 158, 11, 0.12);
+      --radius: 12px;
+      --radius-sm: 8px;
+      --shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
+    }
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      line-height: 1.6;
+      min-height: 100vh;
+    }
+    /* Navbar */
+    .nav {
+      background: var(--bg-card);
+      border-bottom: 1px solid var(--border);
+      padding: 0 24px;
+      height: 60px;
+      display: flex;
+      align-items: center;
+      gap: 32px;
+      position: sticky;
+      top: 0;
+      z-index: 100;
+    }
+    .nav-brand {
+      font-weight: 700;
+      font-size: 18px;
+      color: var(--text);
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    .nav-brand .logo {
+      width: 28px; height: 28px;
+      background: linear-gradient(135deg, var(--primary), #8b5cf6);
+      border-radius: 6px;
+      display: flex; align-items: center; justify-content: center;
+      font-size: 14px; color: #fff;
+    }
+    .nav-links { display: flex; gap: 4px; flex: 1; }
+    .nav-links a {
+      color: var(--text-dim);
+      text-decoration: none;
+      font-size: 14px;
+      font-weight: 500;
+      padding: 8px 14px;
+      border-radius: var(--radius-sm);
+      transition: all 0.15s;
+    }
+    .nav-links a:hover { color: var(--text); background: var(--bg-hover); }
+    .nav-user {
+      color: var(--text-muted);
+      font-size: 13px;
+      display: flex; align-items: center;
+      gap: 12px;
+    }
+    .nav-user a { color: var(--text-dim); text-decoration: none; font-size: 13px; }
+    .nav-user a:hover { color: var(--red); }
+    /* Layout */
+    .container { max-width: 1200px; margin: 0 auto; padding: 32px 24px; }
+    .page-header { margin-bottom: 28px; }
+    .page-header h1 { font-size: 26px; font-weight: 700; margin-bottom: 4px; }
+    .page-header p { color: var(--text-dim); font-size: 14px; }
+    /* Cards grid */
+    .cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); gap: 16px; margin-bottom: 28px; }
+    .card {
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 20px;
+      transition: border-color 0.15s;
+    }
+    .card:hover { border-color: var(--primary-dim); }
+    .card .label { font-size: 12px; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.5px; font-weight: 600; }
+    .card .value { font-size: 32px; font-weight: 700; margin-top: 6px; }
+    .card .value.green { color: var(--green); }
+    .card .value.red { color: var(--red); }
+    .card .value.primary { color: var(--primary); }
+    /* Table */
+    .table-wrap {
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      overflow: hidden;
+    }
+    table { width: 100%; border-collapse: collapse; }
+    th, td { padding: 14px 18px; text-align: left; border-bottom: 1px solid var(--border); font-size: 14px; }
+    th { background: rgba(255,255,255,0.02); color: var(--text-dim); font-weight: 600; font-size: 12px; text-transform: uppercase; letter-spacing: 0.5px; }
+    tr:last-child td { border-bottom: none; }
+    tr.clickable { cursor: pointer; transition: background 0.1s; }
+    tr.clickable:hover { background: var(--bg-hover); }
+    /* Badges */
+    .badge { padding: 3px 10px; border-radius: 20px; font-size: 12px; font-weight: 600; display: inline-block; }
+    .badge-allow { background: var(--green-bg); color: var(--green); }
+    .badge-deny { background: var(--red-bg); color: var(--red); }
+    .badge-approve { background: var(--yellow-bg); color: var(--yellow); }
+    /* Forms */
+    .form-row { margin-bottom: 16px; }
+    .form-row label { display: block; font-size: 13px; font-weight: 600; color: var(--text-dim); margin-bottom: 6px; }
+    .form-row input, .form-row select {
+      width: 100%; padding: 10px 14px;
+      background: var(--bg);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-sm);
+      color: var(--text);
+      font-size: 14px;
+      transition: border-color 0.15s;
+    }
+    .form-row input:focus, .form-row select:focus { outline: none; border-color: var(--primary); }
+    .btn {
+      padding: 10px 20px;
+      border: none;
+      border-radius: var(--radius-sm);
+      cursor: pointer;
+      font-size: 14px;
+      font-weight: 600;
+      transition: all 0.15s;
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+    }
+    .btn-primary { background: var(--primary); color: #fff; }
+    .btn-primary:hover { background: var(--primary-hover); }
+    .btn-danger { background: var(--red-bg); color: var(--red); }
+    .btn-danger:hover { background: var(--red); color: #fff; }
+    .btn-sm { padding: 6px 14px; font-size: 13px; }
+    /* Filters bar */
+    .filters {
+      display: flex; gap: 12px; margin-bottom: 20px; flex-wrap: wrap;
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 16px;
+    }
+    .filters input, .filters select {
+      padding: 8px 12px; background: var(--bg); border: 1px solid var(--border);
+      border-radius: var(--radius-sm); color: var(--text); font-size: 14px;
+    }
+    .filters input:focus, .filters select:focus { outline: none; border-color: var(--primary); }
+    /* Detail panel */
+    .panel {
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 24px;
+      margin-bottom: 16px;
+    }
+    .panel h3 { font-size: 16px; font-weight: 600; margin-bottom: 16px; color: var(--text); }
+    pre {
+      background: var(--bg);
+      border: 1px solid var(--border);
+      padding: 16px;
+      border-radius: var(--radius-sm);
+      overflow-x: auto;
+      font-size: 13px;
+      font-family: "Cascadia Code", "Fira Code", monospace;
+      color: var(--text-dim);
+    }
+    /* Links */
+    a { color: var(--primary); text-decoration: none; }
+    a:hover { text-decoration: underline; }
+    .back-link { display: inline-flex; align-items: center; gap: 6px; color: var(--text-dim); font-size: 14px; margin-top: 16px; }
+    .back-link:hover { color: var(--text); text-decoration: none; }
+    /* Error */
+    .error { color: var(--red); font-size: 14px; margin: 12px 0; padding: 10px 14px; background: var(--red-bg); border-radius: var(--radius-sm); }
+    /* Pagination */
+    .pagination { margin-top: 20px; display: flex; justify-content: center; gap: 8px; }
+    .pagination a { padding: 8px 14px; background: var(--bg-card); border: 1px solid var(--border); border-radius: var(--radius-sm); color: var(--text-dim); font-size: 14px; }
+    .pagination a:hover { background: var(--bg-hover); color: var(--text); text-decoration: none; }
+    /* Empty state */
+    .empty { text-align: center; color: var(--text-muted); padding: 48px; font-size: 14px; }
+    /* Code inline */
+    code { background: var(--bg); padding: 2px 6px; border-radius: 4px; font-size: 13px; font-family: "Cascadia Code", monospace; color: var(--primary); }
+    /* Section list */
+    .section-list { list-style: none; }
+    .section-list li { padding: 10px 0; border-bottom: 1px solid var(--border); }
+    .section-list li:last-child { border-bottom: none; }
   </style>
 </head>
 <body>
+  {% if session %}
   <nav class="nav">
-    <span class="brand">MCP Shield</span>
-    <a href="/dashboard">Dashboard</a>
-    <a href="/reports">Reports</a>
-    <a href="/users">Users</a>
-    <a href="/keys">API Keys</a>
-    <a href="/logout">Logout</a>
+    <div class="nav-brand">
+      <div class="logo">🛡</div>
+      MCP Shield
+    </div>
+    <div class="nav-links">
+      <a href="/dashboard">Dashboard</a>
+      <a href="/reports">Reports</a>
+      <a href="/users">Users</a>
+      <a href="/keys">API Keys</a>
+    </div>
+    <div class="nav-user">
+      <span>{{ session.email }}</span>
+      <span style="color: var(--text-muted)">·</span>
+      <span style="color: var(--primary); text-transform: capitalize">{{ session.role }}</span>
+      <a href="/logout">Logout</a>
+    </div>
   </nav>
+  {% endif %}
   <div class="container">
     {% block content %}{% endblock %}
   </div>
