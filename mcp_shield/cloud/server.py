@@ -61,11 +61,15 @@ def _bootstrap(db: Database) -> None:
 
 
 def main():
-    """Entry point: run the uvicorn server."""
+    """Entry point: run the uvicorn server.
+
+    Railway provides PORT; we also check MCP_SHIELD_PORT for local runs.
+    """
     import uvicorn
 
-    host = os.environ.get("MCP_SHIELD_HOST", "127.0.0.1")
-    port = int(os.environ.get("MCP_SHIELD_PORT", "8000"))
+    host = os.environ.get("MCP_SHIELD_HOST", "0.0.0.0")
+    # Railway sets PORT; prefer it over MCP_SHIELD_PORT.
+    port = int(os.environ.get("PORT") or os.environ.get("MCP_SHIELD_PORT") or "8000")
     app = create_app()
     uvicorn.run(app, host=host, port=port)
 
