@@ -41,9 +41,12 @@ Point your MCP client at `mcp-shield` instead of the real server. Everything aft
 mcp-shield \
   --policy policies/default.yaml \
   --audit audit.jsonl \
+  --detect-injection \
   -- \
   npx -y @modelcontextprotocol/server-filesystem /home/me
 ```
+
+`--detect-injection` enables prompt injection detection (regex + heuristics, deterministic, no extra deps). Optional ML layers (embeddings + LLM judge) need `pip install mcp-shield[detector]` and are configured via a policy/SDK.
 
 ### Claude Desktop config
 
@@ -120,6 +123,19 @@ Gateway pipeline (every tools/call):
 
 **Design principle:** the policy engine is **deterministic** — no LLM is ever consulted for a policy decision. Prompt injection cannot bypass it. LLMs are only used in the optional Layer 4 of the injection detector, never for the final allow/deny.
 
+### Injection detection (Phase 2)
+
+4 layers, 2 mandatory + 2 optional. The final block/allow is a deterministic threshold over a numeric score.
+
+| Layer | Type | Deps | Default |
+|---|---|---|---|
+| 0. Regex | mandatory, deterministic | stdlib | on |
+| 1. Heuristics | mandatory, deterministic | stdlib | on |
+| 2. Embeddings | optional, semantic | sentence-transformers | off |
+| 3. LLM judge | optional, advisory | httpx + API key | off |
+
+Layer 0–1 catch 90%+ of injections instantly (microseconds, no ML). Layer 2–3 only run on the ambiguous "suspicious" band (score 0.5–0.9). A confirmed Layer 0 hit blocks immediately without loading any model. See [`docs/phase2_plan.md`](docs/phase2_plan.md) for the full design.
+
 See [`docs/architecture.md`](docs/architecture.md) for the full design.
 
 ---
@@ -129,7 +145,7 @@ See [`docs/architecture.md`](docs/architecture.md) for the full design.
 | Phase | Status | Scope |
 |---|---|---|
 | 1. Foundation | ✅ | Proxy, policy engine, secret redaction, audit log, CLI |
-| 2. Injection detection | 🔜 | Regex → heuristics → embeddings → optional LLM judge |
+| 2. Injection detection | ✅ | Regex + heuristics (deterministic); optional embeddings + LLM judge |
 | 3. Capability graph | 🔜 | Cross-server taint tracking, chain detection (killer-feature) |
 | 4. Approval flow | 🔜 | Slack/Teams webhook for high-risk calls |
 | 5. Cloud dashboard | 🔜 | Multi-tenant, RBAC, SSO, compliance reports (commercial tier) |

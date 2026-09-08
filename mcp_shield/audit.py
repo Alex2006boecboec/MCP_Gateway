@@ -47,6 +47,7 @@ class AuditEntry:
     reason: str
     rule: str
     redactions: list[dict[str, str]] = field(default_factory=list)
+    detection: Optional[dict[str, Any]] = None   # Phase 2: detector signals
     prev_hash: str = ZERO_HASH
     this_hash: str = ""
 
@@ -97,6 +98,7 @@ class AuditLogger:
         reason: str,
         rule: str,
         redactions: list[dict[str, str]] | None = None,
+        detection: Optional[dict[str, Any]] = None,
     ) -> AuditEntry:
         entry = AuditEntry(
             seq=self._seq + 1,
@@ -108,6 +110,7 @@ class AuditLogger:
             reason=reason,
             rule=rule,
             redactions=redactions or [],
+            detection=detection,
             prev_hash=self._prev_hash,
         )
         entry.this_hash = entry.compute_hash()

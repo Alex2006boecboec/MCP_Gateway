@@ -32,6 +32,7 @@ import logging
 import sys
 from pathlib import Path
 
+from mcp_shield.detector import DetectorConfig
 from mcp_shield.proxy import Proxy, ProxyConfig
 
 
@@ -48,6 +49,9 @@ def main(argv: list[str] | None = None) -> int:
                         help="Deny by default when no rule matches (recommended for production)")
     parser.add_argument("--no-redact", action="store_true", default=False,
                         help="Disable secret redaction (NOT recommended)")
+    parser.add_argument("--detect-injection", action="store_true", default=False,
+                        help="Enable prompt injection detection (regex + heuristics). "
+                        "Optional ML layers require the [detector] pip extra.")
     parser.add_argument("--log-level", default="INFO",
                         choices=["DEBUG", "INFO", "WARNING", "ERROR"])
     # Everything after `--` is the MCP server command.
@@ -75,6 +79,7 @@ def main(argv: list[str] | None = None) -> int:
         server_command=cmd,
         fail_closed=args.fail_closed,
         redact_secrets=not args.no_redact,
+        detector_config=DetectorConfig() if args.detect_injection else None,
     )
     proxy = Proxy(config)
     return proxy.run()

@@ -35,6 +35,7 @@ detector = [
     "scikit-learn>=1.3",
     "fastapi>=0.104",
     "uvicorn>=0.24",
+    "httpx>=0.25",
 ]
 test = [
     "pytest>=7.4",

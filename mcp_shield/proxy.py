@@ -31,6 +31,7 @@ from pathlib import Path
 from typing import Any, Optional
 
 from mcp_shield.audit import AuditLogger
+from mcp_shield.detector import Detector, DetectorConfig
 from mcp_shield.policy import PolicyEngine, Decision, load_policy
 from mcp_shield.protocol import (
     ERR_INJECTION_DETECTED,
@@ -54,6 +55,7 @@ class ProxyConfig:
     server_command: list[str]   # the command to spawn the real MCP server
     fail_closed: bool = True    # if True, deny when no rule matches and default is deny
     redact_secrets: bool = True
+    detector_config: Optional[DetectorConfig] = None  # None = detector disabled
 
 
 class Proxy:
@@ -69,6 +71,7 @@ class Proxy:
         self.policy = PolicyEngine(load_policy(config.policy_path))
         self.redactor = SecretRedactor() if config.redact_secrets else None
         self.audit = AuditLogger(config.audit_path)
+        self.detector = Detector(config.detector_config) if config.detector_config else None
         # The downstream MCP server subprocess.
         self._proc: Optional[subprocess.Popen] = None
 
@@ -159,7 +162,7 @@ class Proxy:
                     req.id if req.id is not None else 0,
                     ERR_INJECTION_DETECTED,
                     resp_decision.reason,
-                    data={"rule": resp_decision.rule},
+                    data={"rule": resp_decision.rule_name},
                 )
                 write_message(sys.stdout.buffer, err)
                 self._audit_response(req, resp_decision, processed_resp, blocked=True)
@@ -222,8 +225,7 @@ class Proxy:
 
     def _inspect_response(self, req: Message, resp: Message) -> tuple[Decision, Message]:
         """Run the response-side pipeline. Returns (decision, possibly-modified message)."""
-        # Phase 1: passthrough with secret redaction on the response.
-        # Phase 2 will add injection detection here.
+        # 1. Secret redaction on the response.
         if self.redactor is not None and isinstance(resp.result, dict):
             new_result, _ = self.redactor.redact_dict(resp.result, container="result")
             new_raw = dict(resp.raw)
@@ -235,12 +237,49 @@ class Proxy:
             )
         else:
             processed = resp
+
+        # 2. Injection detection (Phase 2).
+        if self.detector is not None and isinstance(processed.result, dict):
+            req_args = self._extract_args(req)
+            is_tool_list = req.method == "tools/list"
+            context = {"request_args": req_args, "is_tool_description": is_tool_list}
+            for text in _extract_text(processed.result):
+                try:
+                    result = self.detector.scan(text, context=context)
+                except Exception as exc:
+                    log.warning("detector error: %s", exc)
+                    continue
+                if result.verdict == "blocked":
+                    reason = f"injection detected (score={result.score:.2f})"
+                    if result.signals:
+                        reason += f": {result.signals[0].name}"
+                    # Stash detection detail on the processed message for audit.
+                    processed._detection = {  # type: ignore[attr-defined]
+                        "score": result.score,
+                        "verdict": result.verdict,
+                        "signals": [
+                            {"layer": s.layer, "name": s.name, "score": s.score}
+                            for s in result.signals
+                        ],
+                    }
+                    return Decision("deny", reason, "injection-detector"), processed
+                # Suspicious or clean: record detection detail for audit but allow.
+                processed._detection = {  # type: ignore[attr-defined]
+                    "score": result.score,
+                    "verdict": result.verdict,
+                    "signals": [
+                        {"layer": s.layer, "name": s.name, "score": s.score}
+                        for s in result.signals
+                    ],
+                }
+
         return Decision("allow", "response passthrough", "passthrough"), processed
 
     # --------------------------------------------------------------- audit
 
     def _audit(self, req: Message, decision: Decision, processed: Message, *, blocked: bool) -> None:
         redactions = getattr(processed, "_redactions", [])  # type: ignore[attr-defined]
+        detection = getattr(processed, "_detection", None)  # type: ignore[attr-defined]
         params = req.params or {}
         self.audit.log(
             decision=decision.action,
@@ -251,11 +290,13 @@ class Proxy:
             reason=decision.reason,
             rule=decision.rule_name,
             redactions=redactions,
+            detection=detection,
         )
 
     def _audit_response(self, req: Message, decision: Decision, processed: Message, *, blocked: bool) -> None:
         # Response-side audit (for blocked injections). Same shape as request audit.
         params = req.params or {}
+        detection = getattr(processed, "_detection", None)  # type: ignore[attr-defined]
         self.audit.log(
             decision=decision.action,
             server=str(params.get("server", "unknown")),
@@ -264,4 +305,34 @@ class Proxy:
             reason=decision.reason,
             rule=decision.rule_name,
             redactions=[],
+            detection=detection,
         )
+
+    # ------------------------------------------------------------- helpers
+
+    @staticmethod
+    def _extract_args(req: Message) -> dict:
+        """Extract the arguments dict from a tools/call request (for detector context)."""
+        params = req.params or {}
+        return params.get("arguments") or {
+            k: v for k, v in params.items() if k not in ("server", "name", "tool")
+        }
+
+
+def _extract_text(result: dict) -> list[str]:
+    """Extract text fields from an MCP tool result for injection scanning.
+
+    MCP tool results have shape {"content": [{"type":"text","text":"..."}, ...]}.
+    tools/list results have shape {"tools": [{"name":..., "description":...}, ...]}.
+    We scan every "text" and "description" string we can find.
+    """
+    texts: list[str] = []
+    content = result.get("content") or result.get("tools") or []
+    if isinstance(content, list):
+        for item in content:
+            if isinstance(item, dict):
+                if "text" in item and isinstance(item["text"], str):
+                    texts.append(item["text"])
+                if "description" in item and isinstance(item["description"], str):
+                    texts.append(item["description"])
+    return texts
