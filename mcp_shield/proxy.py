@@ -31,10 +31,14 @@ from pathlib import Path
 from typing import Any, Optional
 
 from mcp_shield.audit import AuditLogger
+from mcp_shield.approval import ApprovalConfig, ApprovalEngine, matches_risk_rule
 from mcp_shield.detector import Detector, DetectorConfig
 from mcp_shield.graph import CapabilityGraph, GraphConfig
 from mcp_shield.policy import PolicyEngine, Decision, load_policy
 from mcp_shield.protocol import (
+    ERR_APPROVAL_DENIED,
+    ERR_APPROVAL_TIMEOUT,
+    ERR_CHAIN_BLOCKED,
     ERR_INJECTION_DETECTED,
     ERR_POLICY_DENIED,
     ERR_VALIDATION_FAILED,
@@ -58,6 +62,7 @@ class ProxyConfig:
     redact_secrets: bool = True
     detector_config: Optional[DetectorConfig] = None  # None = detector disabled
     graph_config: Optional[GraphConfig] = None       # None = graph disabled
+    approval_config: Optional[ApprovalConfig] = None  # None = approval disabled
 
 
 class Proxy:
@@ -75,6 +80,7 @@ class Proxy:
         self.audit = AuditLogger(config.audit_path)
         self.detector = Detector(config.detector_config) if config.detector_config else None
         self.graph = CapabilityGraph(config.graph_config) if config.graph_config else None
+        self.approval = ApprovalEngine(config.approval_config) if config.approval_config else None
         # The downstream MCP server subprocess.
         self._proc: Optional[subprocess.Popen] = None
 
@@ -135,9 +141,20 @@ class Proxy:
             decision, processed = self._inspect_request(req)
             if decision.action == "deny":
                 # Block: respond with an error directly to the agent.
+                # Map the rule_name to the right JSON-RPC error code.
+                if decision.rule_name == "validator":
+                    code = ERR_VALIDATION_FAILED
+                elif decision.rule_name == "injection-detector":
+                    code = ERR_INJECTION_DETECTED
+                elif decision.rule_name == "capability-graph":
+                    code = ERR_CHAIN_BLOCKED
+                elif decision.rule_name == "approval":
+                    code = ERR_APPROVAL_DENIED if "timeout" not in decision.reason else ERR_APPROVAL_TIMEOUT
+                else:
+                    code = ERR_POLICY_DENIED
                 err = make_error_response(
                     req.id if req.id is not None else 0,
-                    ERR_POLICY_DENIED if decision.rule_name != "validator" else ERR_VALIDATION_FAILED,
+                    code,
                     decision.reason,
                     data={"rule": decision.rule_name},
                 )
@@ -233,6 +250,7 @@ class Proxy:
         # 2b. Capability graph: check if this call is a dangerous sink whose
         # args match an active taint (cross-call exfiltration chain). Runs
         # AFTER policy (policy has first say). Only if policy allowed.
+        chain = None
         if decision.action != "deny" and self.graph is not None:
             try:
                 g_decision, chain = self.graph.check_sink(
@@ -244,6 +262,33 @@ class Proxy:
                     processed._chain = _chain_to_dict(chain) if chain else None  # type: ignore[attr-defined]
             except Exception as exc:
                 log.warning("graph check_sink error: %s", exc)
+
+        # 2c. Approval flow: hold high-risk calls for human approval. Runs
+        # LAST on the request side (after policy + graph). Only consulted
+        # when: policy said "approve", OR a graph review chain + require flag,
+        # OR a risk rule matched. Fail-closed: policy "approve" with approval
+        # disabled -> DENY (loud misconfig signal).
+        if decision.action != "deny" and self.approval is not None:
+            try:
+                approval_decision = self._maybe_require_approval(
+                    msg, server, tool, arguments, decision, chain, processed,
+                )
+                if approval_decision is not None:
+                    decision = approval_decision
+            except Exception as exc:
+                # Fail-closed: if approval errors, deny (never forward a call
+                # that needed approval but whose approval errored).
+                log.warning("approval error: %s", exc)
+                decision = Decision("deny", f"approval error: {exc}", "approval")
+
+        elif decision.action == "approve" and self.approval is None:
+            # Policy said "approve" but no approval engine configured ->
+            # fail-closed (loud misconfig signal).
+            decision = Decision(
+                "deny",
+                "policy requires approval but no approval engine is configured",
+                "approval",
+            )
 
         return decision, processed
 
@@ -326,12 +371,64 @@ class Proxy:
 
         return Decision("allow", "response passthrough", "passthrough"), processed
 
+    # ----------------------------------------------------------- approval
+
+    def _maybe_require_approval(
+        self,
+        msg: Message,
+        server: str,
+        tool: str,
+        args: dict,
+        decision: Decision,
+        chain,
+        processed: Message,
+    ) -> Optional[Decision]:
+        """Decide whether this call needs human approval and, if so, run the
+        approval engine. Returns a Decision if approval denied/errored (caller
+        uses it), or None if approved (caller falls through to forward)."""
+        need = False
+        trigger = ""
+        rule_name = ""
+        reason = ""
+
+        if decision.action == "approve":
+            need, trigger, rule_name = True, "policy", decision.rule_name
+            reason = decision.reason or "policy requires approval"
+        elif (chain is not None and self.approval is not None
+              and self.approval.config.require_for_review_chains):
+            need, trigger, rule_name = True, "review-chain", chain.rule_name
+            reason = f"review chain: {chain.rule_name}"
+        else:
+            rule = self.approval.matches_risk_rule(tool, args)
+            if rule is not None:
+                need, trigger, rule_name = True, "risk-rule", rule.name
+                reason = rule.reason
+
+        if not need:
+            return None
+
+        call_id = msg.id if msg.id is not None else 0
+        outcome, response = self.approval.evaluate(
+            call_id=call_id, server=server, tool=tool, args=args,
+            reason=reason, trigger=trigger, rule_name=rule_name,
+        )
+        processed._approval = _approval_to_dict(  # type: ignore[attr-defined]
+            request_id=None, trigger=trigger, rule_name=rule_name,
+            outcome=outcome, response=response,
+        )
+        if outcome == "approve":
+            return None  # fall through -> forward
+        if outcome == "timeout":
+            return Decision("deny", f"approval timeout: {reason}", "approval")
+        return Decision("deny", f"approval denied: {reason}", "approval")
+
     # --------------------------------------------------------------- audit
 
     def _audit(self, req: Message, decision: Decision, processed: Message, *, blocked: bool) -> None:
         redactions = getattr(processed, "_redactions", [])  # type: ignore[attr-defined]
         detection = getattr(processed, "_detection", None)  # type: ignore[attr-defined]
         chain = getattr(processed, "_chain", None)  # type: ignore[attr-defined]
+        approval = getattr(processed, "_approval", None)  # type: ignore[attr-defined]
         params = req.params or {}
         self.audit.log(
             decision=decision.action,
@@ -344,6 +441,7 @@ class Proxy:
             redactions=redactions,
             detection=detection,
             chain=chain,
+            approval=approval,
         )
 
     def _audit_response(self, req: Message, decision: Decision, processed: Message, *, blocked: bool) -> None:
@@ -403,4 +501,15 @@ def _chain_to_dict(chain) -> dict:
         "label": chain.label,
         "sink_capability": chain.sink_capability,
         "rule_name": chain.rule_name,
+    }
+
+
+def _approval_to_dict(*, request_id, trigger, rule_name, outcome, response) -> dict:
+    """Serialize an approval outcome to a dict for the audit log."""
+    return {
+        "trigger": trigger,
+        "rule_name": rule_name,
+        "outcome": outcome,            # "approve" | "deny" | "timeout"
+        "by": response.by if response else "",
+        "comment": response.comment if response else "",
     }

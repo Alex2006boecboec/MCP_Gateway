@@ -31,10 +31,78 @@ import argparse
 import logging
 import sys
 from pathlib import Path
+from typing import Any
 
+import yaml
+
+from mcp_shield.approval import ApprovalConfig, RiskRule
 from mcp_shield.detector import DetectorConfig
 from mcp_shield.graph import GraphConfig
 from mcp_shield.proxy import Proxy, ProxyConfig
+
+
+def _load_approval_from_policy(policy_path: Path) -> dict[str, Any] | None:
+    """Read the `approval:` section from the policy YAML, if present.
+
+    Returns None if the policy has no `approval` section. Does NOT raise on
+    a missing file (the proxy will raise a clearer error later).
+    """
+    try:
+        data = yaml.safe_load(Path(policy_path).read_text(encoding="utf-8"))
+    except (OSError, yaml.YAMLError):
+        return None
+    if not isinstance(data, dict):
+        return None
+    return data.get("approval")
+
+
+def _build_approval_config(
+    *,
+    enabled: bool,
+    policy_path: Path,
+    approval_dir: str | None,
+    timeout: float | None,
+    webhook: str | None,
+) -> ApprovalConfig | None:
+    """Build an ApprovalConfig from CLI flags + the policy `approval` section.
+
+    Returns None if approval is not enabled and the policy has no approval
+    section. CLI flags override policy values.
+    """
+    policy_section = _load_approval_from_policy(policy_path) or {}
+    if not enabled and not policy_section:
+        return None
+
+    cfg = ApprovalConfig(enabled=True)
+    # Base dir overrides (CLI --approval-dir).
+    if approval_dir:
+        cfg.pending_dir = str(Path(approval_dir) / "pending")
+        cfg.response_dir = str(Path(approval_dir) / "responses")
+        cfg.resolved_dir = str(Path(approval_dir) / "resolved")
+    # Timeout override (CLI --approval-timeout).
+    if timeout is not None:
+        cfg.timeout_seconds = timeout
+    # Webhook override (CLI --approval-webhook).
+    if webhook is not None:
+        cfg.webhook_url = webhook
+    # From policy section.
+    if "require_for_review_chains" in policy_section:
+        cfg.require_for_review_chains = bool(policy_section["require_for_review_chains"])
+    if "timeout_seconds" in policy_section:
+        cfg.timeout_seconds = float(policy_section["timeout_seconds"])
+    if "webhook_url" in policy_section and webhook is None:
+        cfg.webhook_url = policy_section["webhook_url"]
+    # Risk rules from policy.
+    for rraw in policy_section.get("risk_rules") or []:
+        if not isinstance(rraw, dict):
+            continue
+        cfg.risk_rules.append(RiskRule(
+            name=str(rraw.get("name", "rule")),
+            tool_regex=str(rraw.get("tool_regex", ".*")),
+            arg_regex=rraw.get("arg_regex"),
+            reason=str(rraw.get("reason", "")),
+        ))
+    return cfg
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -57,6 +125,19 @@ def main(argv: list[str] | None = None) -> int:
                         help="Enable the capability graph: track data flow across tool "
                         "calls and block dangerous cross-server chains (e.g. read a "
                         "secret then send it externally).")
+    parser.add_argument("--require-approval", action="store_true", default=False,
+                        help="Enable the approval flow: hold high-risk tool calls for "
+                        "human approval (file-based queue + optional Slack/Teams webhook). "
+                        "Risk rules are read from the policy's `approval` section.")
+    parser.add_argument("--approval-dir", default=None,
+                        help="Base directory for the approval queue (pending/, responses/, "
+                        "resolved/ subdirs). Default: ./approvals")
+    parser.add_argument("--approval-timeout", type=float, default=None,
+                        help="Seconds to wait for a human decision before timing out "
+                        "(fail-closed). Default: 120")
+    parser.add_argument("--approval-webhook", default=None,
+                        help="Slack/Teams incoming webhook URL for approval notifications. "
+                        "Optional; the file queue works without it.")
     parser.add_argument("--log-level", default="INFO",
                         choices=["DEBUG", "INFO", "WARNING", "ERROR"])
     # Everything after `--` is the MCP server command.
@@ -86,6 +167,13 @@ def main(argv: list[str] | None = None) -> int:
         redact_secrets=not args.no_redact,
         detector_config=DetectorConfig() if args.detect_injection else None,
         graph_config=GraphConfig() if args.track_chains else None,
+        approval_config=_build_approval_config(
+            enabled=args.require_approval,
+            policy_path=Path(args.policy),
+            approval_dir=args.approval_dir,
+            timeout=args.approval_timeout,
+            webhook=args.approval_webhook,
+        ),
     )
     proxy = Proxy(config)
     return proxy.run()

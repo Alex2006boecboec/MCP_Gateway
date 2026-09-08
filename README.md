@@ -1,8 +1,8 @@
 # MCP Shield
 
-**Security gateway for the Model Context Protocol.** Intercepts AI agent tool calls, enforces policy, detects prompt injection, redacts secrets, tracks cross-server data-flow chains, and writes a tamper-evident audit log.
+**Security gateway for the Model Context Protocol.** Intercepts AI agent tool calls, enforces policy, detects prompt injection, redacts secrets, tracks cross-server data-flow chains, holds high-risk calls for human approval, and writes a tamper-evident audit log.
 
-> ⚠️ **Status: Phase 3 (alpha)** — policy engine, secret redaction, audit logging, transparent proxy, multi-layer injection detection, and capability-graph chain detection are implemented. Approval flow and cloud dashboard are planned.
+> ⚠️ **Status: Phase 4 (alpha)** — policy engine, secret redaction, audit logging, transparent proxy, multi-layer injection detection, capability-graph chain detection, and human-in-the-loop approval flow are implemented. Cloud dashboard is planned.
 
 ---
 
@@ -43,11 +43,14 @@ mcp-shield \
   --audit audit.jsonl \
   --detect-injection \
   --track-chains \
+  --require-approval \
+  --approval-dir approvals \
+  --approval-timeout 120 \
   -- \
   npx -y @modelcontextprotocol/server-filesystem /home/me
 ```
 
-`--detect-injection` enables prompt injection detection (regex + heuristics, deterministic, no extra deps). `--track-chains` enables the capability graph, which tracks data flow across tool calls and blocks dangerous cross-server chains (e.g. read a secret file then send its contents to an external URL). Optional ML layers (embeddings + LLM judge) need `pip install mcp-shield[detector]` and are configured via a policy/SDK.
+`--detect-injection` enables prompt injection detection (regex + heuristics, deterministic, no extra deps). `--track-chains` enables the capability graph, which tracks data flow across tool calls and blocks dangerous cross-server chains (e.g. read a secret file then send its contents to an external URL). `--require-approval` holds high-risk tool calls for human approval via a file-based queue (with optional Slack/Teams webhook). Optional ML layers (embeddings + LLM judge) need `pip install mcp-shield[detector]` and are configured via a policy/SDK.
 
 ### Claude Desktop config
 
@@ -158,6 +161,30 @@ The capability graph is what no single-call scanner can see: **cross-server data
 
 Memory is bounded (LRU eviction + TTL expiry) and the graph resets on each new agent session. See [`docs/phase3_plan.md`](docs/phase3_plan.md) for the full design.
 
+### Approval flow (Phase 4)
+
+Some calls are too dangerous to auto-allow but too useful to auto-deny: `rm -rf`, `exec` with untrusted args, external POST, a "review"-severity chain. Phase 4 **holds** these calls and asks a human to approve or deny them. On timeout → fail-closed (deny).
+
+- **Triggers**: a policy rule with `action: approve`, a risk rule in the policy's `approval` section (tool_regex + arg_regex), or a graph "review" chain (optional).
+- **File-based queue** (zero deps): the proxy writes `approvals/pending/<id>.json` (args already redacted); a human or Slack bot writes `approvals/responses/<id>.json` with `{"decision": "approve"|"deny", "by": "..."}`.
+- **Optional webhook**: `--approval-webhook` posts a notification to a Slack/Teams incoming webhook (best-effort; the file queue is the source of truth).
+- **Fail-closed**: timeout → `ERR_APPROVAL_TIMEOUT`; deny → `ERR_APPROVAL_DENIED`; policy `approve` with approval disabled → DENY (loud misconfig signal).
+
+```yaml
+approval:
+  require_for_review_chains: true
+  risk_rules:
+    - name: high-risk-exec
+      tool_regex: ".*exec|.*run|.*shell"
+      reason: "exec-like tool requires approval"
+    - name: destructive-file
+      tool_regex: ".*delete|.*remove|.*rm"
+      arg_regex: "rm|delete|remove"
+      reason: "destructive file operation requires approval"
+```
+
+See [`docs/phase4_plan.md`](docs/phase4_plan.md) for the full design.
+
 See [`docs/architecture.md`](docs/architecture.md) for the full design.
 
 ---
@@ -169,7 +196,7 @@ See [`docs/architecture.md`](docs/architecture.md) for the full design.
 | 1. Foundation | ✅ | Proxy, policy engine, secret redaction, audit log, CLI |
 | 2. Injection detection | ✅ | Regex + heuristics (deterministic); optional embeddings + LLM judge |
 | 3. Capability graph | ✅ | Cross-server taint tracking, chain detection (killer-feature) |
-| 4. Approval flow | 🔜 | Slack/Teams webhook for high-risk calls |
+| 4. Approval flow | ✅ | Slack/Teams webhook for high-risk calls, file-based queue, fail-closed |
 | 5. Cloud dashboard | 🔜 | Multi-tenant, RBAC, SSO, compliance reports (commercial tier) |
 
 ---
