@@ -1,0 +1,56 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "mcp-shield"
+version = "0.1.0"
+description = "Security gateway for MCP (Model Context Protocol) — intercepts AI agent tool calls, enforces policy, detects prompt injection, redacts secrets, audits everything."
+readme = "README.md"
+requires-python = ">=3.10"
+license = {text = "MIT"}
+authors = [{name = "MCP Shield Contributors"}]
+keywords = ["mcp", "model-context-protocol", "ai-security", "prompt-injection", "agent-security", "llm"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "Intended Audience :: Information Technology",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Security",
+    "Topic :: Software Development :: Libraries :: Python Modules",
+]
+dependencies = [
+    "pyyaml>=6.0",
+    "jsonschema>=4.0",
+]
+
+[project.optional-dependencies]
+detector = [
+    "sentence-transformers>=2.2",
+    "scikit-learn>=1.3",
+    "fastapi>=0.104",
+    "uvicorn>=0.24",
+]
+test = [
+    "pytest>=7.4",
+    "pytest-asyncio>=0.21",
+]
+
+[project.scripts]
+mcp-shield = "mcp_shield.cli:main"
+
+[project.urls]
+Homepage = "https://github.com/Alex2006boecboec/mcp-shield"
+Documentation = "https://github.com/Alex2006boecboec/mcp-shield#readme"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["mcp_shield*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

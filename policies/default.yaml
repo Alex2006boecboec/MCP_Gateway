@@ -1,0 +1,102 @@
+# Default MCP Shield policy — secure-by-default for common MCP servers.
+#
+# This policy blocks the most dangerous attack classes out of the box:
+#   - SSRF to internal/metadata IPs (AWS/GCP metadata, localhost, RFC1918)
+#   - Path traversal in filesystem-like tools
+#   - Shell metacharacters in exec-like tools
+#   - Known secret formats are always redacted (handled in code, not here)
+#
+# Trust levels: low | medium | high
+#   low:    strict rules apply (default for unknown/3rd-party servers)
+#   medium:  rules apply but allow-by-default
+#   high:   permissive (use only for fully trusted internal servers)
+
+defaults:
+  action: allow   # change to `deny` for fail-closed mode in production
+
+# Per-server configuration. Override per-tool behavior here.
+servers:
+  filesystem:
+    trust: high
+    tools:
+      read_file:
+        allow: true
+      write_file:
+        allow: true
+      list_directory:
+        allow: true
+      # Note: filesystem MCP doesn't expose exec, but if it did we'd deny.
+
+  fetch:
+    trust: low
+    tools:
+      fetch_url:
+        validate: url
+        block_internal: true
+        reason: "fetch to internal/metadata IPs blocked (SSRF protection)"
+
+  git:
+    trust: medium
+    tools:
+      git_run:
+        validate: command
+        reason: "git command must not contain shell metacharacters"
+
+  sqlite:
+    trust: medium
+    tools:
+      read_query:
+        allow: true
+      write_query:
+        allow: false
+        reason: "write queries not permitted through the proxy"
+
+# Global rules — applied to every tool call regardless of server.
+rules:
+  - name: block-ssrf-metadata
+    when:
+      tool_regex: ".*(fetch|http|get|download|request).*"
+    check:
+      arg_regex: "169\\.254\\.169\\.254"
+    action: deny
+    reason: "SSRF to cloud metadata endpoint blocked"
+
+  - name: block-ssrf-localhost
+    when:
+      tool_regex: ".*(fetch|http|get|download|request).*"
+    check:
+      arg_regex: "(127\\.[0-9]+\\.[0-9]+\\.[0-9]+|localhost)"
+    action: deny
+    reason: "SSRF to localhost blocked"
+
+  - name: block-ssrf-private
+    when:
+      tool_regex: ".*(fetch|http|get|download|request).*"
+    check:
+      arg_regex: "(10\\.[0-9]+\\.[0-9]+\\.[0-9]+|192\\.168\\.[0-9]+\\.[0-9]+|172\\.(1[6-9]|2[0-9]|3[01])\\.[0-9]+\\.[0-9]+)"
+    action: deny
+    reason: "SSRF to RFC1918 private range blocked"
+
+  - name: block-path-traversal
+    when:
+      tool_regex: ".*(read|write|file|path|load|save).*"
+    check:
+      arg_regex: "(\\.\\./|\\.\\\\\\.\\.|/etc/|~/.ssh|~/.aws|~/.config)"
+    action: deny
+    reason: "path traversal to sensitive system files blocked"
+
+  - name: block-shell-metacharacters
+    when:
+      tool_regex: ".*(exec|run|shell|command|bash|sh|cmd).*"
+    check:
+      arg_regex: "[;&|`$\\\\]"
+    action: deny
+    reason: "shell metacharacters in exec-like tool args blocked"
+
+  - name: block-credential-files
+    when:
+      tool_regex: ".*(read|file|path|load|cat|view).*"
+    check:
+      arg_regex: "(~/.ssh/id_rsa|~/.ssh/id_ed25519|~/.aws/credentials|~/.env|~/.netrc|~/.npmrc|~/.pypirc)"
+    action: deny
+    reason: "access to credential files blocked"
