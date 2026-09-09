@@ -80,7 +80,8 @@ def test_ingest_bad_body(client):
     c, db, org, key = client
     resp = c.post("/api/ingest", json={"not_entries": []},
                    headers={"Authorization": f"Bearer {key.key}"})
-    assert resp.status_code == 400
+    # Pydantic validation: 'entries' field is required -> 422
+    assert resp.status_code == 422
 
 
 def test_ingest_secrets_redacted(client):

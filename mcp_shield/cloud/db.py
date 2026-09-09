@@ -35,7 +35,8 @@ CREATE TABLE IF NOT EXISTS api_keys (
     label TEXT,
     created_at REAL NOT NULL,
     revoked INTEGER DEFAULT 0,
-    scopes TEXT DEFAULT '["ingest"]'
+    scopes TEXT DEFAULT '["ingest"]',
+    allowed_ips TEXT DEFAULT '[]'
 );
 CREATE TABLE IF NOT EXISTS users (
     id TEXT PRIMARY KEY,
@@ -101,6 +102,8 @@ def _ensure_columns(conn: sqlite3.Connection) -> None:
     existing_keys = {row[1] for row in conn.execute("PRAGMA table_info(api_keys)").fetchall()}
     if "scopes" not in existing_keys:
         conn.execute("ALTER TABLE api_keys ADD COLUMN scopes TEXT DEFAULT '[\"ingest\"]'")
+    if "allowed_ips" not in existing_keys:
+        conn.execute("ALTER TABLE api_keys ADD COLUMN allowed_ips TEXT DEFAULT '[]'")
     conn.commit()
 
 
@@ -226,23 +229,26 @@ class SqliteStorage:
 
     # ----------------------------------------------------------- api keys
 
-    def create_api_key(self, org_id: str, label: str, scopes: list[str] | None = None) -> ApiKey:
+    def create_api_key(self, org_id: str, label: str, scopes: list[str] | None = None,
+                       allowed_ips: list[str] | None = None) -> ApiKey:
         key = "mcp_live_" + uuid.uuid4().hex
         scopes = scopes or ["ingest"]
-        api_key = ApiKey(key=key, org_id=org_id, label=label, created_at=time.time(), scopes=scopes)
+        allowed_ips = allowed_ips or []
+        api_key = ApiKey(key=key, org_id=org_id, label=label, created_at=time.time(),
+                        scopes=scopes, allowed_ips=allowed_ips)
         with self._lock:
             self._conn.execute(
-                "INSERT INTO api_keys (key, org_id, label, created_at, revoked, scopes) "
-                "VALUES (?, ?, ?, ?, 0, ?)",
+                "INSERT INTO api_keys (key, org_id, label, created_at, revoked, scopes, allowed_ips) "
+                "VALUES (?, ?, ?, ?, 0, ?, ?)",
                 (api_key.key, api_key.org_id, api_key.label, api_key.created_at,
-                 json.dumps(scopes)),
+                 json.dumps(scopes), json.dumps(allowed_ips)),
             )
             self._conn.commit()
         return api_key
 
     def validate_api_key(self, key: str) -> Optional[ApiKey]:
         row = self._conn.execute(
-            "SELECT key, org_id, label, created_at, revoked, scopes FROM api_keys WHERE key = ?",
+            "SELECT key, org_id, label, created_at, revoked, scopes, allowed_ips FROM api_keys WHERE key = ?",
             (key,),
         ).fetchone()
         if row is None or row["revoked"]:
@@ -251,6 +257,7 @@ class SqliteStorage:
             key=row["key"], org_id=row["org_id"], label=row["label"],
             created_at=row["created_at"], revoked=bool(row["revoked"]),
             scopes=json.loads(row["scopes"] or '["ingest"]'),
+            allowed_ips=json.loads(row["allowed_ips"] or "[]"),
         )
 
     def revoke_api_key(self, key: str) -> bool:
@@ -261,14 +268,15 @@ class SqliteStorage:
 
     def list_api_keys(self, org_id: str) -> list[ApiKey]:
         rows = self._conn.execute(
-            "SELECT key, org_id, label, created_at, revoked, scopes FROM api_keys "
+            "SELECT key, org_id, label, created_at, revoked, scopes, allowed_ips FROM api_keys "
             "WHERE org_id = ? ORDER BY created_at",
             (org_id,),
         ).fetchall()
         return [
             ApiKey(key=r["key"], org_id=r["org_id"], label=r["label"],
                    created_at=r["created_at"], revoked=bool(r["revoked"]),
-                   scopes=json.loads(r["scopes"] or '["ingest"]'))
+                   scopes=json.loads(r["scopes"] or '["ingest"]'),
+                   allowed_ips=json.loads(r["allowed_ips"] or "[]"))
             for r in rows
         ]
 

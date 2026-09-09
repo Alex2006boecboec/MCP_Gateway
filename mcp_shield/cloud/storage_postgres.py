@@ -33,7 +33,8 @@ CREATE TABLE IF NOT EXISTS api_keys (
     label TEXT,
     created_at DOUBLE PRECISION NOT NULL,
     revoked BOOLEAN DEFAULT FALSE,
-    scopes JSONB DEFAULT '["ingest"]'::jsonb
+    scopes JSONB DEFAULT '["ingest"]'::jsonb,
+    allowed_ips JSONB DEFAULT '[]'::jsonb
 );
 CREATE TABLE IF NOT EXISTS users (
     id TEXT PRIMARY KEY,
@@ -260,19 +261,22 @@ class PostgresStorage:
 
     # ----------------------------------------------------------- api keys
 
-    def create_api_key(self, org_id: str, label: str, scopes: list[str] | None = None) -> ApiKey:
+    def create_api_key(self, org_id: str, label: str, scopes: list[str] | None = None,
+                       allowed_ips: list[str] | None = None) -> ApiKey:
         key = "mcp_live_" + uuid.uuid4().hex
         scopes = scopes or ["ingest"]
-        api_key = ApiKey(key=key, org_id=org_id, label=label, created_at=time.time(), scopes=scopes)
+        allowed_ips = allowed_ips or []
+        api_key = ApiKey(key=key, org_id=org_id, label=label, created_at=time.time(),
+                        scopes=scopes, allowed_ips=allowed_ips)
         conn = self._conn()
         try:
             with conn:
                 with conn.cursor() as cur:
                     cur.execute(
-                        "INSERT INTO api_keys (key, org_id, label, created_at, revoked, scopes) "
-                        "VALUES (%s, %s, %s, %s, FALSE, %s::jsonb)",
+                        "INSERT INTO api_keys (key, org_id, label, created_at, revoked, scopes, allowed_ips) "
+                        "VALUES (%s, %s, %s, %s, FALSE, %s::jsonb, %s::jsonb)",
                         (api_key.key, api_key.org_id, api_key.label, api_key.created_at,
-                         json.dumps(scopes)),
+                         json.dumps(scopes), json.dumps(allowed_ips)),
                     )
         finally:
             self._put(conn)
@@ -283,7 +287,7 @@ class PostgresStorage:
         try:
             with conn.cursor() as cur:
                 cur.execute(
-                    "SELECT key, org_id, label, created_at, revoked, scopes FROM api_keys WHERE key = %s",
+                    "SELECT key, org_id, label, created_at, revoked, scopes, allowed_ips FROM api_keys WHERE key = %s",
                     (key,),
                 )
                 row = cur.fetchone()
@@ -292,6 +296,7 @@ class PostgresStorage:
             return ApiKey(
                 key=row[0], org_id=row[1], label=row[2], created_at=row[3],
                 revoked=bool(row[4]), scopes=row[5] if row[5] else ["ingest"],
+                allowed_ips=row[6] if row[6] else [],
             )
         finally:
             self._put(conn)
@@ -311,14 +316,15 @@ class PostgresStorage:
         try:
             with conn.cursor() as cur:
                 cur.execute(
-                    "SELECT key, org_id, label, created_at, revoked, scopes FROM api_keys "
+                    "SELECT key, org_id, label, created_at, revoked, scopes, allowed_ips FROM api_keys "
                     "WHERE org_id = %s ORDER BY created_at",
                     (org_id,),
                 )
                 rows = cur.fetchall()
             return [
                 ApiKey(key=r[0], org_id=r[1], label=r[2], created_at=r[3],
-                       revoked=bool(r[4]), scopes=r[5] if r[5] else ["ingest"])
+                       revoked=bool(r[4]), scopes=r[5] if r[5] else ["ingest"],
+                       allowed_ips=r[6] if r[6] else [])
                 for r in rows
             ]
         finally:

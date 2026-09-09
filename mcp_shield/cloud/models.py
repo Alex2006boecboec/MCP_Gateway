@@ -41,6 +41,7 @@ class ApiKey:
     created_at: float
     revoked: bool = False
     scopes: list[str] = field(default_factory=lambda: ["ingest"])  # ["ingest"] | ["read"] | both
+    allowed_ips: list[str] = field(default_factory=list)  # empty = no restriction
 
 
 @dataclass
