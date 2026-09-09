@@ -61,14 +61,15 @@ class SessionManager:
         self.secret_key = secret_key or os.environ.get("MCP_SHIELD_SESSION_SECRET") or secrets.token_hex(32)
         self._serializer = URLSafeTimedSerializer(self.secret_key, salt="mcp-shield-session")
 
-    def create_session(self, user: User) -> str:
+    def create_session(self, user: User, token_version: int = 0) -> str:
         """Create a signed session token for a user. The token encodes
-        (user_id, org_id, role, email) with a timestamp."""
+        (user_id, org_id, role, email, token_version) with a timestamp."""
         payload = {
             "user_id": user.id,
             "org_id": user.org_id,
             "role": user.role,
             "email": user.email,
+            "token_version": token_version,
         }
         return self._serializer.dumps(payload)
 

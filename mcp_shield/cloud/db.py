@@ -67,6 +67,13 @@ CREATE TABLE IF NOT EXISTS events (
 );
 CREATE INDEX IF NOT EXISTS events_org_ts ON events(org_id, ts);
 CREATE INDEX IF NOT EXISTS events_org_decision ON events(org_id, decision);
+CREATE TABLE IF NOT EXISTS password_resets (
+    token TEXT PRIMARY KEY,
+    user_id TEXT NOT NULL REFERENCES users(id),
+    expires_at REAL NOT NULL,
+    used INTEGER DEFAULT 0,
+    created_at REAL NOT NULL
+);
 """
 
 
@@ -356,6 +363,54 @@ class SqliteStorage:
         with self._lock:
             cur = self._conn.execute(
                 "DELETE FROM events WHERE received_at < ?", (cutoff,)
+            )
+            self._conn.commit()
+        return cur.rowcount
+
+    # ----------------------------------------------------------- password resets
+
+    def create_password_reset(self, user_id: str, ttl: float = 3600) -> str:
+        """Create a password reset token. Returns the token string."""
+        token = uuid.uuid4().hex
+        now = time.time()
+        with self._lock:
+            self._conn.execute(
+                "INSERT INTO password_resets (token, user_id, expires_at, used, created_at) "
+                "VALUES (?, ?, ?, 0, ?)",
+                (token, user_id, now + ttl, now),
+            )
+            self._conn.commit()
+        return token
+
+    def get_password_reset(self, token: str) -> Optional[dict]:
+        """Get a password reset token if valid (not used, not expired)."""
+        row = self._conn.execute(
+            "SELECT token, user_id, expires_at, used FROM password_resets WHERE token = ?",
+            (token,),
+        ).fetchone()
+        if row is None:
+            return None
+        if row["used"]:
+            return None
+        if time.time() > row["expires_at"]:
+            return None
+        return {"token": row["token"], "user_id": row["user_id"]}
+
+    def use_password_reset(self, token: str) -> bool:
+        """Mark a password reset token as used."""
+        with self._lock:
+            cur = self._conn.execute(
+                "UPDATE password_resets SET used = 1 WHERE token = ?", (token,)
+            )
+            self._conn.commit()
+        return cur.rowcount > 0
+
+    def cleanup_password_resets(self) -> int:
+        """Delete expired/used password reset tokens."""
+        now = time.time()
+        with self._lock:
+            cur = self._conn.execute(
+                "DELETE FROM password_resets WHERE expires_at < ? OR used = 1", (now,)
             )
             self._conn.commit()
         return cur.rowcount

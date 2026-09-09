@@ -6,10 +6,14 @@ from fastapi.testclient import TestClient
 from mcp_shield.cloud.auth import SessionManager, hash_password
 from mcp_shield.cloud.dashboard import router as dashboard_router
 from mcp_shield.cloud.db import Database
+from mcp_shield.cloud.rate_limit import login_limiter, register_limiter
 
 
 @pytest.fixture
 def app_and_client(tmp_path):
+    # Reset rate limiters to avoid cross-test interference.
+    login_limiter._buckets.clear()
+    register_limiter._buckets.clear()
     db = Database(tmp_path / "test.db")
     org = db.create_org("Acme")
     admin = db.create_user(org.id, "admin@acme.com", hash_password("pass123"), "admin")
@@ -188,7 +192,7 @@ def test_register_creates_new_org(app_and_client):
     resp = c.post("/register", data={
         "org_name": "NewCorp",
         "email": "admin@newcorp.com",
-        "password": "securepass123",
+        "password": "SecurePass123!",
     }, follow_redirects=False)
     assert resp.status_code == 302
     assert resp.headers["location"] == "/dashboard"
@@ -210,7 +214,7 @@ def test_register_short_password_rejected(app_and_client):
         "password": "short",
     }, follow_redirects=False)
     assert resp.status_code == 400
-    assert "at least 8" in resp.text
+    assert "at least 12" in resp.text
     # User NOT created.
     assert db.get_user_by_email("admin@newcorp.com") is None
 
@@ -220,7 +224,7 @@ def test_register_duplicate_email_rejected(app_and_client):
     resp = c.post("/register", data={
         "org_name": "AnotherCorp",
         "email": admin.email,  # already exists
-        "password": "securepass123",
+        "password": "SecurePass123!",
     }, follow_redirects=False)
     assert resp.status_code == 400
     assert "already registered" in resp.text
@@ -231,7 +235,7 @@ def test_register_empty_org_name_rejected(app_and_client):
     resp = c.post("/register", data={
         "org_name": "   ",
         "email": "admin@test.com",
-        "password": "securepass123",
+        "password": "SecurePass123!",
     }, follow_redirects=False)
     assert resp.status_code == 400
     assert "required" in resp.text
@@ -243,7 +247,7 @@ def test_register_auto_login(app_and_client):
     resp = c.post("/register", data={
         "org_name": "AutoLoginCorp",
         "email": "admin@autologin.com",
-        "password": "securepass123",
+        "password": "SecurePass123!",
     }, follow_redirects=False)
     # Follow the redirect with the session cookie.
     resp2 = c.get("/dashboard", follow_redirects=False)
@@ -255,7 +259,7 @@ def test_register_creates_default_api_key(app_and_client):
     c.post("/register", data={
         "org_name": "KeyCorp",
         "email": "admin@keycorp.com",
-        "password": "securepass123",
+        "password": "SecurePass123!",
     }, follow_redirects=False)
     user = db.get_user_by_email("admin@keycorp.com")
     keys = db.list_api_keys(user.org_id)

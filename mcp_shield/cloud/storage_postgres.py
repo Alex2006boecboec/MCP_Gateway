@@ -66,6 +66,13 @@ CREATE TABLE IF NOT EXISTS events (
 CREATE INDEX IF NOT EXISTS events_org_ts ON events(org_id, ts);
 CREATE INDEX IF NOT EXISTS events_org_decision ON events(org_id, decision);
 CREATE UNIQUE INDEX IF NOT EXISTS events_org_seq_unique ON events(org_id, seq) WHERE seq IS NOT NULL;
+CREATE TABLE IF NOT EXISTS password_resets (
+    token TEXT PRIMARY KEY,
+    user_id TEXT NOT NULL REFERENCES users(id),
+    expires_at DOUBLE PRECISION NOT NULL,
+    used BOOLEAN DEFAULT FALSE,
+    created_at DOUBLE PRECISION NOT NULL
+);
 """
 
 
@@ -439,6 +446,63 @@ class PostgresStorage:
             with conn:
                 with conn.cursor() as cur:
                     cur.execute("DELETE FROM events WHERE received_at < %s", (cutoff,))
+                    return cur.rowcount
+        finally:
+            self._put(conn)
+
+    # ----------------------------------------------------------- password resets
+
+    def create_password_reset(self, user_id: str, ttl: float = 3600) -> str:
+        token = uuid.uuid4().hex
+        now = time.time()
+        conn = self._conn()
+        try:
+            with conn:
+                with conn.cursor() as cur:
+                    cur.execute(
+                        "INSERT INTO password_resets (token, user_id, expires_at, used, created_at) "
+                        "VALUES (%s, %s, %s, FALSE, %s)",
+                        (token, user_id, now + ttl, now),
+                    )
+            return token
+        finally:
+            self._put(conn)
+
+    def get_password_reset(self, token: str) -> Optional[dict]:
+        conn = self._conn()
+        try:
+            with conn.cursor() as cur:
+                cur.execute(
+                    "SELECT token, user_id FROM password_resets "
+                    "WHERE token = %s AND used = FALSE AND expires_at > %s",
+                    (token, time.time()),
+                )
+                row = cur.fetchone()
+            if row is None:
+                return None
+            return {"token": row[0], "user_id": row[1]}
+        finally:
+            self._put(conn)
+
+    def use_password_reset(self, token: str) -> bool:
+        conn = self._conn()
+        try:
+            with conn:
+                with conn.cursor() as cur:
+                    cur.execute("UPDATE password_resets SET used = TRUE WHERE token = %s", (token,))
+                    return cur.rowcount > 0
+        finally:
+            self._put(conn)
+
+    def cleanup_password_resets(self) -> int:
+        conn = self._conn()
+        try:
+            with conn:
+                with conn.cursor() as cur:
+                    cur.execute(
+                        "DELETE FROM password_resets WHERE expires_at < %s OR used = TRUE",
+                        (time.time(),),
+                    )
                     return cur.rowcount
         finally:
             self._put(conn)

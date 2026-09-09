@@ -13,6 +13,7 @@ Public API:
 from mcp_shield.cloud.auth import SessionManager, hash_password, verify_password
 from mcp_shield.cloud.db import SqliteStorage
 from mcp_shield.cloud.models import ApiKey, Event, Org, User
+from mcp_shield.cloud.passwords import is_strong_password, validate_password
 from mcp_shield.cloud.rbac import can, is_valid_role
 from mcp_shield.cloud.reports import FRAMEWORKS, generate_report, report_to_csv
 from mcp_shield.cloud.server import create_app, main
@@ -33,6 +34,8 @@ __all__ = [
     "generate_report",
     "report_to_csv",
     "FRAMEWORKS",
+    "validate_password",
+    "is_strong_password",
     "Org",
     "User",
     "ApiKey",
