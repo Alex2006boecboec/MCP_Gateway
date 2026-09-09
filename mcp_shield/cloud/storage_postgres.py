@@ -25,7 +25,8 @@ SCHEMA_SQL = """
 CREATE TABLE IF NOT EXISTS orgs (
     id TEXT PRIMARY KEY,
     name TEXT NOT NULL,
-    created_at DOUBLE PRECISION NOT NULL
+    created_at DOUBLE PRECISION NOT NULL,
+    plan TEXT DEFAULT 'free'
 );
 CREATE TABLE IF NOT EXISTS api_keys (
     key TEXT PRIMARY KEY,
@@ -141,14 +142,14 @@ class PostgresStorage:
     # ----------------------------------------------------------- orgs
 
     def create_org(self, name: str) -> Org:
-        org = Org(id=uuid.uuid4().hex, name=name, created_at=time.time())
+        org = Org(id=uuid.uuid4().hex, name=name, created_at=time.time(), plan="free")
         conn = self._conn()
         try:
             with conn:
                 with conn.cursor() as cur:
                     cur.execute(
-                        "INSERT INTO orgs (id, name, created_at) VALUES (%s, %s, %s)",
-                        (org.id, org.name, org.created_at),
+                        "INSERT INTO orgs (id, name, created_at, plan) VALUES (%s, %s, %s, %s)",
+                        (org.id, org.name, org.created_at, org.plan),
                     )
         finally:
             self._put(conn)
@@ -158,11 +159,40 @@ class PostgresStorage:
         conn = self._conn()
         try:
             with conn.cursor() as cur:
-                cur.execute("SELECT id, name, created_at FROM orgs WHERE id = %s", (org_id,))
+                cur.execute("SELECT id, name, created_at, plan FROM orgs WHERE id = %s", (org_id,))
                 row = cur.fetchone()
             if row is None:
                 return None
-            return Org(id=row[0], name=row[1], created_at=row[2])
+            return Org(id=row[0], name=row[1], created_at=row[2], plan=row[3] if len(row) > 3 else "free")
+        finally:
+            self._put(conn)
+
+    def update_org_plan(self, org_id: str, plan: str) -> bool:
+        conn = self._conn()
+        try:
+            with conn:
+                with conn.cursor() as cur:
+                    cur.execute(
+                        "UPDATE orgs SET plan = %s WHERE id = %s", (plan, org_id)
+                    )
+                    return cur.rowcount > 0
+        finally:
+            self._put(conn)
+
+    def count_events_current_month(self, org_id: str) -> int:
+        """Count events received in the current calendar month."""
+        import datetime
+        now = datetime.datetime.utcnow()
+        month_start = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+        conn = self._conn()
+        try:
+            with conn.cursor() as cur:
+                cur.execute(
+                    "SELECT COUNT(*) FROM events WHERE org_id = %s AND received_at >= %s",
+                    (org_id, month_start.timestamp()),
+                )
+                row = cur.fetchone()
+            return row[0] if row else 0
         finally:
             self._put(conn)
 

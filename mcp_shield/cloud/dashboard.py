@@ -553,8 +553,11 @@ async def forgot_password(
     if user is not None:
         # Generate reset token (TTL 1 hour).
         token = db.create_password_reset(user.id, ttl=3600)
-        # In production, send via email. For MVP, log only a truncated hint
-        # (never the full token — that would allow anyone with log access to reset passwords).
+        # Send reset email via SMTP (or log in dev mode).
+        from mcp_shield.cloud.email import get_email_service
+        email_service = get_email_service()
+        email_service.send_password_reset(email, token)
+        # Log only a truncated hint (never the full token).
         import logging
         logging.getLogger("mcp_shield.cloud").info(
             "password reset token generated for %s (token prefix: %s...)",
@@ -660,3 +663,41 @@ async def delete_org(
     resp = RedirectResponse("/login", status_code=302)
     resp.delete_cookie(COOKIE_NAME)
     return resp
+
+
+# ----------------------------------------------------------- subscription plans
+
+@router.get("/plans", response_class=HTMLResponse)
+def plans_page(request: Request):
+    """Show available subscription plans and current plan."""
+    session = _require_user(request)
+    db = _get_db(request)
+    org = db.get_org(session["org_id"])
+    from mcp_shield.cloud.plans import PLANS, get_plan
+    current_plan = get_plan(org.plan if org else "free")
+    # Calculate current month usage.
+    usage = db.count_events_current_month(session["org_id"])
+    return templates.TemplateResponse(request, "plans.html",
+        _base_context(request, session) | {"plans": PLANS, "current_plan": current_plan, "usage": usage})
+
+
+@router.post("/plans/upgrade")
+def upgrade_plan(
+    request: Request,
+    plan: str = Form(...),
+):
+    """Upgrade the org's plan (admin only)."""
+    session = _require_role(request, "manage_org")
+    db = _get_db(request)
+    from mcp_shield.cloud.plans import PLANS, can_upgrade_to
+    if plan not in PLANS:
+        raise HTTPException(status_code=400, detail="invalid plan")
+    org_id = session["org_id"]
+    org = db.get_org(org_id)
+    current = org.plan if org else "free"
+    if not can_upgrade_to(current, plan):
+        raise HTTPException(status_code=400, detail="can only upgrade to a higher plan")
+    db.update_org_plan(org_id, plan)
+    db.log_action(org_id, session["user_id"], session.get("email", ""),
+                   "plan.upgrade", "org", org_id, f"{current} -> {plan}")
+    return RedirectResponse("/plans", status_code=302)

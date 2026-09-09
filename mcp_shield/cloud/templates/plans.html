@@ -1,0 +1,61 @@
+{% extends "base.html" %}
+{% block title %}Plans — MCP Shield{% endblock %}
+{% block content %}
+<div class="page-header">
+  <h1>Subscription Plans</h1>
+  <p>Current plan: <strong style="color: var(--primary)">{{ current_plan.display_name }}</strong>
+     · This month: <strong>{{ usage }}</strong> events used</p>
+</div>
+
+<div class="cards" style="grid-template-columns: repeat(auto-fill, minmax(260px, 1fr))">
+  {% for name, plan in plans.items() %}
+  <div class="card" style="border-color: {% if name == current_plan.name %}var(--primary){% else %}var(--border){% endif %}">
+    <div class="label">{{ plan.display_name }}</div>
+    <div class="value" style="font-size: 24px; margin-top: 4px;">
+      {% if plan.price_monthly == 0 and name != 'enterprise' %}Free
+      {% elif name == 'enterprise' %}Custom
+      {% else %}${{ plan.price_monthly / 100 }}<span style="font-size: 14px; color: var(--text-muted)">/mo</span>
+      {% endif %}
+    </div>
+    <ul style="list-style: none; margin-top: 16px; font-size: 13px; color: var(--text-dim)">
+      <li style="padding: 4px 0">📊 {% if plan.max_events_per_month == -1 %}Unlimited{% else %}{{ "{:,}".format(plan.max_events_per_month) }}{% endif %} events/mo</li>
+      <li style="padding: 4px 0">🔌 {% if plan.max_proxies == -1 %}Unlimited{% else %}{{ plan.max_proxies }}{% endif %} proxies</li>
+      <li style="padding: 4px 0">🔧 {% if plan.max_mcp_servers == -1 %}Unlimited{% else %}{{ plan.max_mcp_servers }}{% endif %} MCP servers</li>
+      <li style="padding: 4px 0">{% if plan.has_postgres %}✅{% else %}❌{% endif %} PostgreSQL</li>
+      <li style="padding: 4px 0">{% if plan.has_sso %}✅{% else %}❌{% endif %} SSO (OIDC)</li>
+      <li style="padding: 4px 0">{% if plan.has_approval_flow %}✅{% else %}❌{% endif %} Approval flow</li>
+      <li style="padding: 4px 0">{% if plan.has_compliance_reports %}✅{% else %}❌{% endif %} Compliance reports</li>
+      <li style="padding: 4px 0">{% if plan.has_ip_allowlist %}✅{% else %}❌{% endif %} IP allowlist</li>
+      <li style="padding: 4px 0">{% if plan.has_custom_rules %}✅{% else %}❌{% endif %} Custom rules</li>
+    </ul>
+    {% if name == current_plan.name %}
+      <div style="margin-top: 16px; text-align: center; padding: 8px; background: var(--primary-dim); border-radius: var(--radius-sm); color: #fff; font-size: 13px; font-weight: 600;">Current Plan</div>
+    {% elif name != 'enterprise' %}
+      <form action="/plans/upgrade" method="POST" style="margin-top: 16px">
+        <input type="hidden" name="plan" value="{{ name }}">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+        <button type="submit" class="btn btn-primary btn-sm" style="width: 100%">Upgrade to {{ plan.display_name }}</button>
+      </form>
+    {% else %}
+      <div style="margin-top: 16px; text-align: center; padding: 8px; background: var(--bg-hover); border-radius: var(--radius-sm); color: var(--text-dim); font-size: 13px;">Contact sales</div>
+    {% endif %}
+  </div>
+  {% endfor %}
+</div>
+
+<div class="panel" style="margin-top: 24px">
+  <h3>Usage This Month</h3>
+  <p style="color: var(--text-dim); font-size: 14px;">
+    Events used: <strong>{{ usage }}</strong> / 
+    {% if current_plan.max_events_per_month == -1 %}Unlimited
+    {% else %}{{ "{:,}".format(current_plan.max_events_per_month) }}{% endif %}
+  </p>
+  {% if current_plan.max_events_per_month != -1 %}
+    {% set pct = (usage / current_plan.max_events_per_month * 100) | int %}
+    <div style="background: var(--bg); border-radius: var(--radius-sm); height: 8px; margin-top: 12px; overflow: hidden">
+      <div style="background: {% if pct > 80 %}var(--red){% elif pct > 50 %}var(--yellow){% else %}var(--green){% endif %}; height: 100%; width: {{ pct }}%; transition: width 0.3s"></div>
+    </div>
+    <p style="color: var(--text-muted); font-size: 12px; margin-top: 6px">{{ pct }}% used</p>
+  {% endif %}
+</div>
+{% endblock %}

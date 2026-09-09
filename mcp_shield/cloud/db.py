@@ -27,7 +27,8 @@ SCHEMA = """
 CREATE TABLE IF NOT EXISTS orgs (
     id TEXT PRIMARY KEY,
     name TEXT NOT NULL,
-    created_at REAL NOT NULL
+    created_at REAL NOT NULL,
+    plan TEXT DEFAULT 'free'
 );
 CREATE TABLE IF NOT EXISTS api_keys (
     key TEXT PRIMARY KEY,
@@ -104,6 +105,10 @@ def _ensure_columns(conn: sqlite3.Connection) -> None:
         conn.execute("ALTER TABLE api_keys ADD COLUMN scopes TEXT DEFAULT '[\"ingest\"]'")
     if "allowed_ips" not in existing_keys:
         conn.execute("ALTER TABLE api_keys ADD COLUMN allowed_ips TEXT DEFAULT '[]'")
+    # Add plan column to orgs (for subscription tiers).
+    existing_org = {row[1] for row in conn.execute("PRAGMA table_info(orgs)").fetchall()}
+    if "plan" not in existing_org:
+        conn.execute("ALTER TABLE orgs ADD COLUMN plan TEXT DEFAULT 'free'")
     conn.commit()
 
 
@@ -142,22 +147,41 @@ class SqliteStorage:
     # ----------------------------------------------------------- orgs
 
     def create_org(self, name: str) -> Org:
-        org = Org(id=uuid.uuid4().hex, name=name, created_at=time.time())
+        org = Org(id=uuid.uuid4().hex, name=name, created_at=time.time(), plan="free")
         with self._lock:
             self._conn.execute(
-                "INSERT INTO orgs (id, name, created_at) VALUES (?, ?, ?)",
-                (org.id, org.name, org.created_at),
+                "INSERT INTO orgs (id, name, created_at, plan) VALUES (?, ?, ?, ?)",
+                (org.id, org.name, org.created_at, org.plan),
             )
             self._conn.commit()
         return org
 
     def get_org(self, org_id: str) -> Optional[Org]:
         row = self._conn.execute(
-            "SELECT id, name, created_at FROM orgs WHERE id = ?", (org_id,)
+            "SELECT id, name, created_at, plan FROM orgs WHERE id = ?", (org_id,)
         ).fetchone()
         if row is None:
             return None
-        return Org(id=row["id"], name=row["name"], created_at=row["created_at"])
+        return Org(id=row["id"], name=row["name"], created_at=row["created_at"], plan=row["plan"] if "plan" in row.keys() else "free")
+
+    def update_org_plan(self, org_id: str, plan: str) -> bool:
+        with self._lock:
+            cur = self._conn.execute(
+                "UPDATE orgs SET plan = ? WHERE id = ?", (plan, org_id)
+            )
+            self._conn.commit()
+            return cur.rowcount > 0
+
+    def count_events_current_month(self, org_id: str) -> int:
+        """Count events received in the current calendar month."""
+        import datetime
+        now = datetime.datetime.utcnow()
+        month_start = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+        row = self._conn.execute(
+            "SELECT COUNT(*) as cnt FROM events WHERE org_id = ? AND received_at >= ?",
+            (org_id, month_start.timestamp()),
+        ).fetchone()
+        return row["cnt"] if row else 0
 
     # ----------------------------------------------------------- users
 

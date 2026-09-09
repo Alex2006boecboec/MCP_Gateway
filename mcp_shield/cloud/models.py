@@ -16,6 +16,7 @@ class Org:
     id: str
     name: str
     created_at: float
+    plan: str = "free"  # "free" | "pro" | "business" | "enterprise"
 
 
 @dataclass

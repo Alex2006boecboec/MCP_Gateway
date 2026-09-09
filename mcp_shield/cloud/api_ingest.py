@@ -149,6 +149,15 @@ async def _do_ingest(request: Request, authorization: Optional[str]) -> dict:
     if len(body.entries) > _MAX_BATCH_SIZE:
         raise HTTPException(status_code=413, detail=f"batch too large (max {_MAX_BATCH_SIZE})")
 
+    # Check plan limits: events per month.
+    org = db.get_org(org_id)
+    if org is not None:
+        from mcp_shield.cloud.plans import check_event_limit
+        current_count = db.count_events_current_month(org_id)
+        allowed, reason = check_event_limit(org.plan, current_count + len(body.entries))
+        if not allowed:
+            raise HTTPException(status_code=429, detail=f"plan limit exceeded: {reason}")
+
     accepted = 0
     for entry in body.entries:
         inserted = db.insert_event(org_id, entry.to_db_dict())
