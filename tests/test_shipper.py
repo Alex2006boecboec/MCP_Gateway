@@ -59,7 +59,7 @@ def test_disabled_shipper_no_send(cloud_server):
 
 def test_ship_single_event(cloud_server):
     cfg = CloudShipperConfig(enabled=True, url=cloud_server, api_key="mcp_live_test",
-                              batch_size=1, flush_interval=999)
+                              batch_size=1, flush_interval=999, allow_http=True)
     s = CloudShipper(cfg)
     s.ship(_entry(seq=1))
     assert len(_CloudMockHandler.received_batches) == 1
@@ -69,7 +69,7 @@ def test_ship_single_event(cloud_server):
 
 def test_batch_until_full(cloud_server):
     cfg = CloudShipperConfig(enabled=True, url=cloud_server, api_key="mcp_live_test",
-                             batch_size=3, flush_interval=999)
+                             batch_size=3, flush_interval=999, allow_http=True)
     s = CloudShipper(cfg)
     s.ship(_entry(seq=1))
     s.ship(_entry(seq=2))
@@ -80,14 +80,15 @@ def test_batch_until_full(cloud_server):
 
 
 def test_flush_empty_buffer(cloud_server):
-    cfg = CloudShipperConfig(enabled=True, url=cloud_server, api_key="mcp_live_test")
+    cfg = CloudShipperConfig(enabled=True, url=cloud_server, api_key="mcp_live_test",
+                             allow_http=True)
     s = CloudShipper(cfg)
     assert s.flush() == 0
 
 
 def test_flush_sends_all(cloud_server):
     cfg = CloudShipperConfig(enabled=True, url=cloud_server, api_key="mcp_live_test",
-                             batch_size=100, flush_interval=999)
+                             batch_size=100, flush_interval=999, allow_http=True)
     s = CloudShipper(cfg)
     s.ship(_entry(seq=1))
     s.ship(_entry(seq=2))
@@ -113,7 +114,7 @@ def test_no_key_no_send():
 def test_network_error_no_raise():
     """If the cloud is unreachable, ship/flush must not raise."""
     cfg = CloudShipperConfig(enabled=True, url="http://127.0.0.1:1", api_key="key",
-                             max_retries=2, timeout=1)
+                             max_retries=2, timeout=1, allow_http=True)
     s = CloudShipper(cfg)
     s.ship(_entry())
     # flush should not raise, returns 0
@@ -126,7 +127,7 @@ def test_auth_error_no_retry(cloud_server):
     # We can't easily make the mock return 401, so test via a bad URL path.
     # Instead, test that auth error is handled gracefully via network error.
     cfg = CloudShipperConfig(enabled=True, url="http://127.0.0.1:1", api_key="bad",
-                             max_retries=1, timeout=1)
+                             max_retries=1, timeout=1, allow_http=True)
     s = CloudShipper(cfg)
     s.ship(_entry())
     assert s.flush() == 0  # no crash
@@ -135,7 +136,7 @@ def test_auth_error_no_retry(cloud_server):
 def test_idempotent_seq(cloud_server):
     """The shipper sends the seq; the cloud dedupes. Shipper just sends."""
     cfg = CloudShipperConfig(enabled=True, url=cloud_server, api_key="mcp_live_test",
-                             batch_size=1)
+                             batch_size=1, allow_http=True)
     s = CloudShipper(cfg)
     s.ship(_entry(seq=1))
     s.ship(_entry(seq=1))  # same seq - shipper sends both, cloud dedupes

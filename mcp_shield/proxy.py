@@ -89,12 +89,32 @@ class Proxy:
 
     def run(self) -> int:
         """Main loop: pump messages between agent (stdin/stdout) and the
-        MCP server subprocess. Returns the exit code."""
+        MCP server subprocess. Returns the exit code.
+
+        Handles SIGTERM for graceful shutdown: flushes shipper, spools
+        remaining events, closes subprocess."""
+        import signal
+
+        def _sigterm_handler(signum, frame):
+            log.info("SIGTERM received, shutting down gracefully...")
+            self._shutdown()
+            # Flush shipper if present.
+            shipper = getattr(self.config, "shipper", None)
+            if shipper is not None:
+                shipper.shutdown()
+            sys.exit(0)
+
+        signal.signal(signal.SIGTERM, _sigterm_handler)
+
         self._spawn_server()
         try:
             self._pump()
         finally:
             self._shutdown()
+            # Flush shipper on normal exit too.
+            shipper = getattr(self.config, "shipper", None)
+            if shipper is not None:
+                shipper.shutdown()
         return 0
 
     # -------------------------------------------------------------- spawn
