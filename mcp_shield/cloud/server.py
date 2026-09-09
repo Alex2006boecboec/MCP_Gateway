@@ -24,6 +24,12 @@ from fastapi import FastAPI
 from mcp_shield.cloud.api_ingest import router as ingest_router
 from mcp_shield.cloud.auth import SessionManager, hash_password
 from mcp_shield.cloud.dashboard import router as dashboard_router
+from mcp_shield.cloud.middleware import (
+    ApiCorsMiddleware,
+    CSRFMiddleware,
+    RequestSizeLimitMiddleware,
+    SecurityHeadersMiddleware,
+)
 from mcp_shield.cloud.storage_factory import create_storage
 
 
@@ -34,9 +40,19 @@ def create_app(db_path: str | None = None, secret: str | None = None) -> FastAPI
     from env DATABASE_URL (Postgres on Railway) or MCP_SHIELD_DB_PATH.
     """
     db = create_storage(db_path)
-    app = FastAPI(title="MCP Shield Cloud Dashboard", version="5.0.0")
+    app = FastAPI(title="MCP Shield Cloud Dashboard", version="5.1.0")
     app.state.db = db
     app.state.session_manager = SessionManager(secret_key=secret)
+
+    # Middleware order: outermost first (executed last on response).
+    # Security headers on all responses.
+    app.add_middleware(SecurityHeadersMiddleware)
+    # CORS only for /api/ paths.
+    app.add_middleware(ApiCorsMiddleware)
+    # Request size limits.
+    app.add_middleware(RequestSizeLimitMiddleware, default_max=2_000_000, ingest_max=1_000_000)
+    # CSRF protection for form POSTs (API exempt).
+    app.add_middleware(CSRFMiddleware)
 
     app.include_router(ingest_router)
     app.include_router(dashboard_router)

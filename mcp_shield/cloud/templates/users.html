@@ -37,6 +37,7 @@
 <div class="panel">
   <h3>Add New User</h3>
   <form method="post" action="/users" style="display: flex; gap: 12px; flex-wrap: wrap; align-items: flex-end;">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
     <div class="form-row" style="flex: 1; min-width: 200px; margin-bottom: 0;">
       <label>Email</label>
       <input type="email" name="email" placeholder="newuser@company.com" required>

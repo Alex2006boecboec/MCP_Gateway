@@ -31,6 +31,7 @@
         <td>
           {% if not k.revoked %}
           <form method="post" action="/keys/{{ k.key }}/revoke" style="display: inline;">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
             <button type="submit" class="btn btn-danger btn-sm">Revoke</button>
           </form>
           {% endif %}
@@ -47,6 +48,7 @@
 <div class="panel">
   <h3>Create New API Key</h3>
   <form method="post" action="/keys" style="display: flex; gap: 12px; align-items: flex-end;">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
     <div class="form-row" style="flex: 1; margin-bottom: 0;">
       <label>Label</label>
       <input type="text" name="label" placeholder="e.g. prod-proxy-1" required>

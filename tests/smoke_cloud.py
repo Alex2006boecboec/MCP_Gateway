@@ -102,7 +102,12 @@ def main():
     print(f"  Cross-org isolation: OK (org B sees {len(events_b)} events)")
 
     # 6. Login to the dashboard and verify it shows events.
-    resp = client.post("/login", data={"email": admin_email, "password": "admin"}, follow_redirects=False)
+    # GET /login first to obtain CSRF cookie.
+    client.get("/login")
+    csrf_token = client.cookies.get("mcp_shield_csrf", "")
+    resp = client.post("/login", data={
+        "email": admin_email, "password": "admin", "csrf_token": csrf_token,
+    }, follow_redirects=False)
     assert resp.status_code == 302, f"login failed: {resp.status_code}"
     print(f"  Dashboard login: OK")
 

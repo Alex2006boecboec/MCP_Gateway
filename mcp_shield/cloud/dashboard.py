@@ -7,6 +7,7 @@ session user's org_id (multi-tenant isolation).
 
 from __future__ import annotations
 
+import os
 from typing import Optional
 
 from fastapi import APIRouter, Depends, Form, HTTPException, Request, Response, status
@@ -15,6 +16,7 @@ from fastapi.templating import Jinja2Templates
 
 from mcp_shield.cloud.auth import SessionManager, hash_password, verify_password
 from mcp_shield.cloud.db import Database
+from mcp_shield.cloud.middleware import CSRF_COOKIE_NAME
 from mcp_shield.cloud.rbac import can
 from mcp_shield.cloud.reports import FRAMEWORKS, generate_report, report_to_csv
 
@@ -22,6 +24,30 @@ router = APIRouter(tags=["dashboard"])
 templates = Jinja2Templates(directory="mcp_shield/cloud/templates")
 
 COOKIE_NAME = "mcp_shield_session"
+
+
+def _is_https() -> bool:
+    return os.environ.get("MCP_SHIELD_HTTPS", "") == "1"
+
+
+def _set_session_cookie(resp: Response, token: str) -> None:
+    """Set session cookie with security flags."""
+    resp.set_cookie(
+        COOKIE_NAME,
+        token,
+        httponly=True,
+        samesite="lax",
+        secure=_is_https(),
+        max_age=7 * 24 * 3600,
+        path="/",
+    )
+
+
+def _base_context(request: Request, session: Optional[dict] = None) -> dict:
+    """Common template context with CSRF token."""
+    ctx = {"session": session}
+    ctx["csrf_token"] = request.cookies.get(CSRF_COOKIE_NAME, "")
+    return ctx
 
 
 # ----------------------------------------------------------- dependencies
@@ -72,7 +98,7 @@ def index(request: Request):
 
 @router.get("/login", response_class=HTMLResponse)
 def login_form(request: Request):
-    return templates.TemplateResponse(request, "login.html", {"error": None})
+    return templates.TemplateResponse(request, "login.html", _base_context(request) | {"error": None})
 
 
 @router.post("/login")
@@ -84,11 +110,12 @@ async def login(
     db = _get_db(request)
     user = db.get_user_by_email(email)
     if user is None or not verify_password(password, user.password_hash or ""):
-        return templates.TemplateResponse(request, "login.html", {"error": "Invalid email or password"}, status_code=401)
+        return templates.TemplateResponse(request, "login.html",
+            _base_context(request) | {"error": "Invalid email or password"}, status_code=401)
     sm: SessionManager = request.app.state.session_manager
     token = sm.create_session(user)
     resp = RedirectResponse("/dashboard", status_code=302)
-    resp.set_cookie(COOKIE_NAME, token, httponly=True, max_age=7 * 24 * 3600)
+    _set_session_cookie(resp, token)
     return resp
 
 
@@ -101,7 +128,7 @@ def logout(request: Request):
 
 @router.get("/register", response_class=HTMLResponse)
 def register_form(request: Request):
-    return templates.TemplateResponse(request, "register.html", {"error": None})
+    return templates.TemplateResponse(request, "register.html", _base_context(request) | {"error": None})
 
 
 @router.post("/register")
@@ -116,13 +143,13 @@ async def register(
     # Check if email already exists.
     if db.get_user_by_email(email) is not None:
         return templates.TemplateResponse(request, "register.html",
-            {"error": "Email already registered. Use /login instead."}, status_code=400)
+            _base_context(request) | {"error": "Email already registered. Use /login instead."}, status_code=400)
     if len(password) < 8:
         return templates.TemplateResponse(request, "register.html",
-            {"error": "Password must be at least 8 characters."}, status_code=400)
+            _base_context(request) | {"error": "Password must be at least 8 characters."}, status_code=400)
     if not org_name.strip():
         return templates.TemplateResponse(request, "register.html",
-            {"error": "Organization name is required."}, status_code=400)
+            _base_context(request) | {"error": "Organization name is required."}, status_code=400)
     # Create org + admin user.
     org = db.create_org(org_name.strip())
     user = db.create_user(org.id, email, hash_password(password), "admin")
@@ -132,7 +159,7 @@ async def register(
     sm: SessionManager = request.app.state.session_manager
     token = sm.create_session(user)
     resp = RedirectResponse("/dashboard", status_code=302)
-    resp.set_cookie(COOKIE_NAME, token, httponly=True, max_age=7 * 24 * 3600)
+    _set_session_cookie(resp, token)
     return resp
 
 
@@ -154,8 +181,7 @@ def dashboard(
     events = db.query_events(org_id, decision=decision, server=server, tool=tool,
                               start=start, end=end, limit=limit, offset=offset)
     summary = db.summary(org_id, start=start, end=end)
-    return templates.TemplateResponse(request, "dashboard.html", {
-        "session": session,
+    return templates.TemplateResponse(request, "dashboard.html", _base_context(request, session) | {
         "events": events,
         "summary": summary,
         "filters": {"decision": decision or "", "server": server or "", "tool": tool or "",
@@ -172,14 +198,13 @@ def event_detail(request: Request, event_id: int):
     ev = db.get_event(session["org_id"], event_id)
     if ev is None:
         raise HTTPException(status_code=404, detail="event not found")
-    return templates.TemplateResponse(request, "event_detail.html", {"session": session, "event": ev})
+    return templates.TemplateResponse(request, "event_detail.html", _base_context(request, session) | {"event": ev})
 
 
 @router.get("/reports", response_class=HTMLResponse)
 def reports_page(request: Request):
     session = _require_role(request, "view_reports")
-    return templates.TemplateResponse(request, "reports.html", {
-        "session": session,
+    return templates.TemplateResponse(request, "reports.html", _base_context(request, session) | {
         "frameworks": FRAMEWORKS,
     })
 
@@ -194,8 +219,7 @@ def view_report(
     session = _require_role(request, "view_reports")
     db = _get_db(request)
     report = generate_report(db, session["org_id"], framework, start, end)
-    return templates.TemplateResponse(request, "report_view.html", {
-        "session": session,
+    return templates.TemplateResponse(request, "report_view.html", _base_context(request, session) | {
         "report": report,
     })
 
@@ -220,7 +244,7 @@ def users_page(request: Request):
     session = _require_role(request, "manage_users")
     db = _get_db(request)
     users = db.list_users(session["org_id"])
-    return templates.TemplateResponse(request, "users.html", {"session": session, "users": users})
+    return templates.TemplateResponse(request, "users.html", _base_context(request, session) | {"users": users})
 
 
 @router.post("/users")
@@ -246,7 +270,7 @@ def keys_page(request: Request):
     session = _require_role(request, "manage_keys")
     db = _get_db(request)
     keys = db.list_api_keys(session["org_id"])
-    return templates.TemplateResponse(request, "keys.html", {"session": session, "keys": keys})
+    return templates.TemplateResponse(request, "keys.html", _base_context(request, session) | {"keys": keys})
 
 
 @router.post("/keys")

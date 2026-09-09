@@ -105,6 +105,7 @@
     <p class="subtitle">Sign in to your security dashboard</p>
     {% if error %}<div class="error">{{ error }}</div>{% endif %}
     <form method="post" action="/login">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
       <div class="form-row">
         <label for="email">Email</label>
         <input type="email" id="email" name="email" placeholder="you@company.com" required autofocus>
