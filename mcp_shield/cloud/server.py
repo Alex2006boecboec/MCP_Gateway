@@ -87,20 +87,21 @@ def _start_retention_task(db) -> None:
     thread.start()
 
 
-def _bootstrap(db: Database) -> None:
+def _bootstrap(db) -> None:
     """On first run, create a default admin org + user if no org exists."""
-    # Check if any org exists.
-    row = db._conn.execute("SELECT COUNT(*) as c FROM orgs").fetchone()
-    if row and row["c"] > 0:
+    # Check if any org exists (uses Storage protocol, works for SQLite + Postgres).
+    if db.count_orgs() > 0:
         return
     org = db.create_org("Default Org")
-    db.create_user(org.id, "admin@mcp-shield.local", hash_password("admin"), "admin")
+    # Create admin with must_change_password=True to force a password change
+    # on first login (the default password "admin" is weak).
+    admin = db.create_user(org.id, "admin@mcp-shield.local", hash_password("admin"), "admin", must_change_password=True)
     db.create_api_key(org.id, "default")
     print("=" * 60, file=sys.stderr)
     print("  MCP Shield Cloud - first-run bootstrap complete.", file=sys.stderr)
     print(f"  Default org: {org.name} ({org.id})", file=sys.stderr)
     print("  Admin login: admin@mcp-shield.local / admin", file=sys.stderr)
-    print("  CHANGE THE PASSWORD IMMEDIATELY in production!", file=sys.stderr)
+    print("  You will be REQUIRED to change this password on first login.", file=sys.stderr)
     print("=" * 60, file=sys.stderr)
 
 

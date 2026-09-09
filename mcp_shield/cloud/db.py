@@ -126,6 +126,19 @@ class SqliteStorage:
     def close(self) -> None:
         self._conn.close()
 
+    def health_check(self) -> bool:
+        """Return True if the database is reachable."""
+        try:
+            self._conn.execute("SELECT 1").fetchone()
+            return True
+        except Exception:
+            return False
+
+    def count_orgs(self) -> int:
+        """Return the total number of orgs (for bootstrap check)."""
+        row = self._conn.execute("SELECT COUNT(*) as c FROM orgs").fetchone()
+        return row["c"] if row else 0
+
     # ----------------------------------------------------------- orgs
 
     def create_org(self, name: str) -> Org:
@@ -148,16 +161,17 @@ class SqliteStorage:
 
     # ----------------------------------------------------------- users
 
-    def create_user(self, org_id: str, email: str, password_hash: str, role: str) -> User:
+    def create_user(self, org_id: str, email: str, password_hash: str, role: str, must_change_password: bool = False) -> User:
         user = User(
             id=uuid.uuid4().hex, org_id=org_id, email=email, role=role,
             created_at=time.time(), password_hash=password_hash,
+            must_change_password=must_change_password,
         )
         with self._lock:
             self._conn.execute(
-                "INSERT INTO users (id, org_id, email, password_hash, role, created_at) "
-                "VALUES (?, ?, ?, ?, ?, ?)",
-                (user.id, user.org_id, user.email, user.password_hash, user.role, user.created_at),
+                "INSERT INTO users (id, org_id, email, password_hash, role, created_at, must_change_password) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?)",
+                (user.id, user.org_id, user.email, user.password_hash, user.role, user.created_at, must_change_password),
             )
             self._conn.commit()
         return user
@@ -212,9 +226,10 @@ class SqliteStorage:
         return cur.rowcount > 0
 
     def update_user_role(self, user_id: str, role: str) -> bool:
+        """Update role and increment token_version to invalidate old sessions."""
         with self._lock:
             cur = self._conn.execute(
-                "UPDATE users SET role = ? WHERE id = ?",
+                "UPDATE users SET role = ?, token_version = token_version + 1 WHERE id = ?",
                 (role, user_id),
             )
             self._conn.commit()

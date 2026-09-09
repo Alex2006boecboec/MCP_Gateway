@@ -34,16 +34,28 @@ templates = Jinja2Templates(directory="mcp_shield/cloud/templates")
 
 COOKIE_NAME = "mcp_shield_session"
 
+# Simple email regex (good enough for input validation; the real check is
+# whether we can send mail, but we don't have an email service yet).
+import re as _re
+_EMAIL_RE = _re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
+
+
+def _is_valid_email(email: str) -> bool:
+    """Return True if email looks like a valid address."""
+    return bool(_EMAIL_RE.match(email.strip()))
+
 
 @router.get("/health")
 def health_check(request: Request):
     """Health check endpoint. No auth required. Returns 200 or 503."""
     db = _get_db(request)
     try:
-        if hasattr(db, "_conn"):
-            db._conn.execute("SELECT 1").fetchone()
-        from fastapi.responses import JSONResponse
-        return JSONResponse({"status": "ok", "database": "connected"})
+        if db.health_check():
+            from fastapi.responses import JSONResponse
+            return JSONResponse({"status": "ok", "database": "connected"})
+        else:
+            from fastapi.responses import JSONResponse
+            return JSONResponse({"status": "error", "detail": "database unreachable"}, status_code=503)
     except Exception as e:
         from fastapi.responses import JSONResponse
         return JSONResponse({"status": "error", "detail": str(e)}, status_code=503)
@@ -165,12 +177,13 @@ async def login(
     record_login_success(email)
     sm: SessionManager = request.app.state.session_manager
     token = sm.create_session(user, token_version=user.token_version)
-    resp = RedirectResponse("/dashboard", status_code=302)
-    _set_session_cookie(resp, token)
 
-    # If must_change_password, redirect to /settings.
+    # If must_change_password, redirect to /settings (with session cookie set).
     if user.must_change_password:
-        return RedirectResponse("/settings?force=1", status_code=302)
+        resp = RedirectResponse("/settings?force=1", status_code=302)
+    else:
+        resp = RedirectResponse("/dashboard", status_code=302)
+    _set_session_cookie(resp, token)
     return resp
 
 
@@ -207,6 +220,11 @@ async def register(
     if db.get_user_by_email(email) is not None:
         return templates.TemplateResponse(request, "register.html",
             _base_context(request) | {"error": "Email already registered. Use /login instead."}, status_code=400)
+
+    # Validate email format.
+    if not _is_valid_email(email):
+        return templates.TemplateResponse(request, "register.html",
+            _base_context(request) | {"error": "Invalid email format."}, status_code=400)
 
     # Validate password strength.
     pw_errors = validate_password(password)
@@ -286,7 +304,10 @@ def view_report(
 ):
     session = _require_role(request, "view_reports")
     db = _get_db(request)
-    report = generate_report(db, session["org_id"], framework, start, end)
+    try:
+        report = generate_report(db, session["org_id"], framework, start, end)
+    except ValueError:
+        raise HTTPException(status_code=404, detail="unknown report framework")
     return templates.TemplateResponse(request, "report_view.html", _base_context(request, session) | {
         "report": report,
     })
@@ -301,7 +322,10 @@ def download_report(
 ):
     session = _require_role(request, "view_reports")
     db = _get_db(request)
-    report = generate_report(db, session["org_id"], framework, start, end)
+    try:
+        report = generate_report(db, session["org_id"], framework, start, end)
+    except ValueError:
+        raise HTTPException(status_code=404, detail="unknown report framework")
     csv = report_to_csv(report)
     return Response(content=csv, media_type="text/csv",
                      headers={"Content-Disposition": f"attachment; filename={framework}_report.csv"})
@@ -326,6 +350,13 @@ async def create_user(
     db = _get_db(request)
     if role not in ("admin", "analyst", "viewer"):
         raise HTTPException(status_code=400, detail="invalid role")
+    # Validate email format.
+    if not _is_valid_email(email):
+        raise HTTPException(status_code=400, detail="invalid email format")
+    # Validate password strength.
+    pw_errors = validate_password(password)
+    if pw_errors:
+        raise HTTPException(status_code=400, detail=" ".join(pw_errors))
     try:
         user = db.create_user(session["org_id"], email, hash_password(password), role)
         db.log_action(session["org_id"], session["user_id"], session.get("email", ""),
@@ -406,6 +437,10 @@ async def create_key(
 async def revoke_key(request: Request, key: str):
     session = _require_role(request, "manage_keys")
     db = _get_db(request)
+    # Verify the key belongs to this org (prevent cross-org IDOR).
+    api_key = db.validate_api_key(key)
+    if api_key is None or api_key.org_id != session["org_id"]:
+        raise HTTPException(status_code=404, detail="key not found")
     db.revoke_api_key(key)
     db.log_action(session["org_id"], session["user_id"], session.get("email", ""),
                    "key.revoke", "api_key", key, "")

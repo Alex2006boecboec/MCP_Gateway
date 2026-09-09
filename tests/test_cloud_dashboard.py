@@ -127,7 +127,7 @@ def test_viewer_blocked_from_reports(app_and_client):
 def test_admin_can_create_user(app_and_client):
     c, *_ = app_and_client
     _login(c, "admin@acme.com")
-    resp = c.post("/users", data={"email": "new@acme.com", "password": "pass", "role": "viewer"}, follow_redirects=False)
+    resp = c.post("/users", data={"email": "new@acme.com", "password": "NewUserPass123!", "role": "viewer"}, follow_redirects=False)
     assert resp.status_code == 302
 
 

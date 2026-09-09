@@ -114,6 +114,27 @@ class PostgresStorage:
     def close(self) -> None:
         self._pool.closeall()
 
+    def health_check(self) -> bool:
+        """Return True if the database is reachable."""
+        try:
+            conn = self._conn()
+            try:
+                conn.execute("SELECT 1").fetchone()
+                return True
+            finally:
+                self._put(conn)
+        except Exception:
+            return False
+
+    def count_orgs(self) -> int:
+        """Return the total number of orgs (for bootstrap check)."""
+        conn = self._conn()
+        try:
+            row = conn.execute("SELECT COUNT(*) AS c FROM orgs").fetchone()
+            return row[0] if row else 0
+        finally:
+            self._put(conn)
+
     # ----------------------------------------------------------- orgs
 
     def create_org(self, name: str) -> Org:
@@ -144,19 +165,20 @@ class PostgresStorage:
 
     # ----------------------------------------------------------- users
 
-    def create_user(self, org_id: str, email: str, password_hash: str, role: str) -> User:
+    def create_user(self, org_id: str, email: str, password_hash: str, role: str, must_change_password: bool = False) -> User:
         user = User(
             id=uuid.uuid4().hex, org_id=org_id, email=email, role=role,
             created_at=time.time(), password_hash=password_hash,
+            must_change_password=must_change_password,
         )
         conn = self._conn()
         try:
             with conn:
                 with conn.cursor() as cur:
                     cur.execute(
-                        "INSERT INTO users (id, org_id, email, password_hash, role, created_at) "
-                        "VALUES (%s, %s, %s, %s, %s, %s)",
-                        (user.id, user.org_id, user.email, user.password_hash, user.role, user.created_at),
+                        "INSERT INTO users (id, org_id, email, password_hash, role, created_at, must_change_password) "
+                        "VALUES (%s, %s, %s, %s, %s, %s, %s)",
+                        (user.id, user.org_id, user.email, user.password_hash, user.role, user.created_at, must_change_password),
                     )
         finally:
             self._put(conn)
@@ -237,11 +259,15 @@ class PostgresStorage:
             self._put(conn)
 
     def update_user_role(self, user_id: str, role: str) -> bool:
+        """Update role and increment token_version to invalidate old sessions."""
         conn = self._conn()
         try:
             with conn:
                 with conn.cursor() as cur:
-                    cur.execute("UPDATE users SET role = %s WHERE id = %s", (role, user_id))
+                    cur.execute(
+                        "UPDATE users SET role = %s, token_version = token_version + 1 WHERE id = %s",
+                        (role, user_id),
+                    )
                     return cur.rowcount > 0
         finally:
             self._put(conn)

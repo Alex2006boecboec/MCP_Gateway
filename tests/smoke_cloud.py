@@ -47,13 +47,13 @@ def main():
     db: Database = app.state.db
 
     # Get the default org + admin from bootstrap.
-    # Find the default org.
-    row = db._conn.execute("SELECT id, name FROM orgs LIMIT 1").fetchone()
-    org_id = row["id"]
+    # Find the default org via the admin user (works for SQLite + Postgres).
+    admin = db.get_user_by_email("admin@mcp-shield.local")
+    org_id = admin.org_id
     admin_email = "admin@mcp-shield.local"
     # Create an API key for the proxy.
     api_key = db.create_api_key(org_id, "smoke-test-proxy")
-    print(f"  Org: {row['name']} ({org_id})")
+    print(f"  Org: {org_id}")
     print(f"  API key: {api_key.key[:20]}...")
 
     # 2. Create a shipper pointed at the cloud (via TestClient transport).

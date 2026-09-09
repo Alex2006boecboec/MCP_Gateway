@@ -194,7 +194,7 @@ class TestDashboardAudit:
         c, db, org, admin, viewer = app_client
         _login(c)
         c.post("/users", data={
-            "email": "new@test.com", "password": "NewPass123!", "role": "viewer",
+            "email": "new@test.com", "password": "NewPass1234!", "role": "viewer",
         }, follow_redirects=False)
         actions = db.query_actions(org.id)
         assert any(a["action"] == "user.create" for a in actions)
