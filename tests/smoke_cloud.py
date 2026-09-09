@@ -111,6 +111,16 @@ def main():
     assert resp.status_code == 302, f"login failed: {resp.status_code}"
     print(f"  Dashboard login: OK")
 
+    # 6b. Bootstrap admin has must_change_password=True — change password first.
+    client.get("/login")
+    csrf_token = client.cookies.get("mcp_shield_csrf", "")
+    resp = client.post("/settings", data={
+        "old_password": "admin", "new_password": "SmokeTest123!",
+        "new_password_confirm": "SmokeTest123!", "csrf_token": csrf_token,
+    }, follow_redirects=False)
+    assert resp.status_code == 302, f"password change failed: {resp.status_code}"
+    print(f"  Password change: OK")
+
     # 7. Dashboard shows events.
     resp = client.get("/dashboard", follow_redirects=False)
     assert resp.status_code == 200, f"dashboard failed: {resp.status_code}"

@@ -157,8 +157,20 @@ def test_dashboard(client, db, org_id):
     csrf = get_csrf(client)
     do_login(client, "admin@mcp-shield.local", "admin", csrf)
 
+    # Bootstrap admin has must_change_password=True — dashboard should redirect.
     r = client.get("/dashboard", follow_redirects=False)
-    check("3a. Dashboard -> 200", r.status_code == 200)
+    check("3a. Dashboard with must_change -> 302", r.status_code == 302, f"got {r.status_code}")
+
+    # Change password to clear must_change_password.
+    csrf = get_csrf(client)
+    client.post("/settings", data={
+        "old_password": "admin", "new_password": "AdminPass123!",
+        "new_password_confirm": "AdminPass123!", "csrf_token": csrf,
+    }, follow_redirects=False)
+
+    # Now dashboard should be accessible.
+    r = client.get("/dashboard", follow_redirects=False)
+    check("3a2. Dashboard after password change -> 200", r.status_code == 200, f"got {r.status_code}")
 
     client2 = TestClient(app := client.app)
     r = client2.get("/dashboard", follow_redirects=False)

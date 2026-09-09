@@ -37,7 +37,7 @@ COOKIE_NAME = "mcp_shield_session"
 # Simple email regex (good enough for input validation; the real check is
 # whether we can send mail, but we don't have an email service yet).
 import re as _re
-_EMAIL_RE = _re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
+_EMAIL_RE = _re.compile(r"^[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}$")
 
 
 def _is_valid_email(email: str) -> bool:
@@ -114,14 +114,25 @@ def _get_session(request: Request) -> Optional[dict]:
             return None  # user deleted or soft-deleted
         if "token_version" in payload and payload["token_version"] != user.token_version:
             return None  # session invalidated by password/role change
+        # Carry must_change_password flag so _require_user can enforce it.
+        payload["must_change_password"] = user.must_change_password
     return payload
 
 
 def _require_user(request: Request) -> dict:
-    """Require a logged-in user. Raises 401 -> redirect to /login."""
+    """Require a logged-in user. Raises 403 if not logged in.
+    If the user must change their password, redirect to /settings
+    (unless they're already on /settings or /logout)."""
     session = _get_session(request)
     if session is None:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="not logged in")
+    # Enforce must_change_password on every page except /settings and /logout.
+    if session.get("must_change_password") and request.url.path not in ("/settings", "/logout"):
+        raise HTTPException(
+            status_code=status.HTTP_302_FOUND,
+            detail="password change required",
+            headers={"Location": "/settings?force=1"},
+        )
     return session
 
 
@@ -235,9 +246,10 @@ async def register(
     if not org_name.strip():
         return templates.TemplateResponse(request, "register.html",
             _base_context(request) | {"error": "Organization name is required."}, status_code=400)
+    org_name = org_name.strip()[:100]  # limit length
 
     # Create org + admin user.
-    org = db.create_org(org_name.strip())
+    org = db.create_org(org_name)
     user = db.create_user(org.id, email, hash_password(password), "admin")
     # Auto-create a default API key.
     db.create_api_key(org.id, "default")
@@ -263,6 +275,7 @@ def dashboard(
     db = _get_db(request)
     org_id = session["org_id"]
     limit = 50
+    page = max(1, page)  # prevent negative/zero offset (Postgres errors on negative OFFSET)
     offset = (page - 1) * limit
     events = db.query_events(org_id, decision=decision, server=server, tool=tool,
                               start=start, end=end, limit=limit, offset=offset)
@@ -423,6 +436,9 @@ async def create_key(
 ):
     session = _require_role(request, "manage_keys")
     db = _get_db(request)
+    label = label.strip()[:100]  # limit length
+    if not label:
+        raise HTTPException(status_code=400, detail="label is required")
     # Parse scopes.
     scope_list = [s.strip() for s in scopes.split(",") if s.strip() in ("ingest", "read")]
     if not scope_list:
@@ -455,6 +471,7 @@ def audit_page(request: Request, page: int = 1):
     session = _require_role(request, "manage_users")
     db = _get_db(request)
     limit = 100
+    page = max(1, page)  # prevent negative/zero offset
     offset = (page - 1) * limit
     actions = db.query_actions(session["org_id"], limit=limit, offset=offset)
     return templates.TemplateResponse(request, "audit.html",
@@ -536,10 +553,12 @@ async def forgot_password(
     if user is not None:
         # Generate reset token (TTL 1 hour).
         token = db.create_password_reset(user.id, ttl=3600)
-        # In production, send via email. For MVP, log it.
+        # In production, send via email. For MVP, log only a truncated hint
+        # (never the full token — that would allow anyone with log access to reset passwords).
         import logging
         logging.getLogger("mcp_shield.cloud").info(
-            "password reset token for %s: %s", email, token
+            "password reset token generated for %s (token prefix: %s...)",
+            email, token[:8],
         )
     # Always show "sent" message (don't leak whether email exists).
     return templates.TemplateResponse(request, "forgot.html",

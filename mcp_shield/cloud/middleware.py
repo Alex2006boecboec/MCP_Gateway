@@ -177,7 +177,6 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
         response.headers["X-Frame-Options"] = "DENY"
         response.headers["X-Content-Type-Options"] = "nosniff"
         response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
-        response.headers["X-XSS-Protection"] = "1; mode=block"
         # CSP: allow inline styles (templates use <style>), self for everything else.
         response.headers["Content-Security-Policy"] = (
             "default-src 'self'; "

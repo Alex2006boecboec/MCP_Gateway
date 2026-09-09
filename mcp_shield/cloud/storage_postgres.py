@@ -108,6 +108,9 @@ class PostgresStorage:
             with conn:
                 with conn.cursor() as cur:
                     cur.execute(SCHEMA_SQL)
+            # Apply migrations (for future schema changes).
+            from mcp_shield.cloud.migrator import run_migrations
+            run_migrations(conn)
         finally:
             self._put(conn)
 

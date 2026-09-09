@@ -37,7 +37,7 @@
             </select>
           </form>
           <form method="post" action="/users/{{ u.id }}/delete" style="display: inline-block; margin-left: 8px;"
-                onsubmit="return confirm('Delete user {{ u.email }}? This cannot be undone.');">
+                data-confirm="Delete user {{ u.email }}? This cannot be undone.">
             <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
             <button type="submit" class="btn btn-danger btn-sm">Delete</button>
           </form>
@@ -77,4 +77,14 @@
     <button type="submit" class="btn btn-primary">Add User</button>
   </form>
 </div>
+
+<script>
+  // Safe confirm dialog: read data-confirm attribute (no eval, no inline JS injection).
+  document.querySelectorAll('form[data-confirm]').forEach(function(f) {
+    f.addEventListener('submit', function(e) {
+      var msg = f.getAttribute('data-confirm');
+      if (msg && !confirm(msg)) { e.preventDefault(); }
+    });
+  });
+</script>
 {% endblock %}
