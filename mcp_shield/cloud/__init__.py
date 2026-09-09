@@ -11,16 +11,20 @@ Public API:
 """
 
 from mcp_shield.cloud.auth import SessionManager, hash_password, verify_password
-from mcp_shield.cloud.db import Database
+from mcp_shield.cloud.db import SqliteStorage
 from mcp_shield.cloud.models import ApiKey, Event, Org, User
 from mcp_shield.cloud.rbac import can, is_valid_role
 from mcp_shield.cloud.reports import FRAMEWORKS, generate_report, report_to_csv
 from mcp_shield.cloud.server import create_app, main
+from mcp_shield.cloud.storage import Storage
+from mcp_shield.cloud.storage_factory import create_storage
 
 __all__ = [
     "create_app",
+    "create_storage",
     "main",
-    "Database",
+    "SqliteStorage",
+    "Storage",
     "SessionManager",
     "hash_password",
     "verify_password",

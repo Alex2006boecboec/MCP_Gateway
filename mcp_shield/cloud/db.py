@@ -1,12 +1,14 @@
-"""SQLite database layer for the cloud dashboard (Phase 5).
+"""SQLite storage backend for the cloud dashboard.
 
 Uses stdlib `sqlite3` — zero-config, file-based. Every query is scoped by
 org_id (multi-tenant isolation). All queries use parameterized SQL (?)
 to prevent SQL injection.
 
-The DB is created on first run via `init_db`. CRUD methods are on the
-`Database` class. The class is NOT thread-safe (SQLite with a single
-writer); the cloud server is sequential for MVP.
+This is the SQLite backend (for tests and local dev). For production,
+see storage_postgres.py. Both implement the Storage protocol from
+storage.py.
+
+Thread-safety: check_same_thread=False + a lock serializes writes.
 """
 
 from __future__ import annotations
@@ -32,7 +34,8 @@ CREATE TABLE IF NOT EXISTS api_keys (
     org_id TEXT NOT NULL REFERENCES orgs(id),
     label TEXT,
     created_at REAL NOT NULL,
-    revoked INTEGER DEFAULT 0
+    revoked INTEGER DEFAULT 0,
+    scopes TEXT DEFAULT '["ingest"]'
 );
 CREATE TABLE IF NOT EXISTS users (
     id TEXT PRIMARY KEY,
@@ -40,7 +43,10 @@ CREATE TABLE IF NOT EXISTS users (
     email TEXT NOT NULL UNIQUE,
     password_hash TEXT,
     role TEXT NOT NULL,
-    created_at REAL NOT NULL
+    created_at REAL NOT NULL,
+    token_version INTEGER DEFAULT 0,
+    must_change_password INTEGER DEFAULT 0,
+    deleted INTEGER DEFAULT 0
 );
 CREATE TABLE IF NOT EXISTS events (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -64,22 +70,35 @@ CREATE INDEX IF NOT EXISTS events_org_decision ON events(org_id, decision);
 """
 
 
-class Database:
-    """SQLite-backed store for the cloud dashboard."""
+def _ensure_columns(conn: sqlite3.Connection) -> None:
+    """Add columns that may be missing in older DBs (ALTER TABLE)."""
+    existing = {row[1] for row in conn.execute("PRAGMA table_info(users)").fetchall()}
+    if "token_version" not in existing:
+        conn.execute("ALTER TABLE users ADD COLUMN token_version INTEGER DEFAULT 0")
+    if "must_change_password" not in existing:
+        conn.execute("ALTER TABLE users ADD COLUMN must_change_password INTEGER DEFAULT 0")
+    if "deleted" not in existing:
+        conn.execute("ALTER TABLE users ADD COLUMN deleted INTEGER DEFAULT 0")
+    existing_keys = {row[1] for row in conn.execute("PRAGMA table_info(api_keys)").fetchall()}
+    if "scopes" not in existing_keys:
+        conn.execute("ALTER TABLE api_keys ADD COLUMN scopes TEXT DEFAULT '[\"ingest\"]'")
+    conn.commit()
+
+
+class SqliteStorage:
+    """SQLite-backed store for the cloud dashboard. Implements Storage."""
 
     def __init__(self, path: str | Path):
         self.path = str(path)
-        # check_same_thread=False allows use across threads (FastAPI runs
-        # handlers in a thread pool). A lock serializes writes for safety.
         self._lock = threading.Lock()
         self._conn = sqlite3.connect(self.path, check_same_thread=False)
         self._conn.row_factory = sqlite3.Row
         self.init_db()
 
     def init_db(self) -> None:
-        """Create all tables if they don't exist. Idempotent."""
         with self._lock:
             self._conn.executescript(SCHEMA)
+            _ensure_columns(self._conn)
             self._conn.commit()
 
     def close(self) -> None:
@@ -123,59 +142,88 @@ class Database:
 
     def get_user_by_email(self, email: str) -> Optional[User]:
         row = self._conn.execute(
-            "SELECT id, org_id, email, password_hash, role, created_at FROM users WHERE email = ?",
+            "SELECT id, org_id, email, password_hash, role, created_at, token_version, "
+            "must_change_password, deleted FROM users WHERE email = ? AND deleted = 0",
             (email,),
         ).fetchone()
         if row is None:
             return None
-        return User(
-            id=row["id"], org_id=row["org_id"], email=row["email"],
-            password_hash=row["password_hash"], role=row["role"],
-            created_at=row["created_at"],
-        )
+        return _row_to_user(row)
 
     def get_user(self, user_id: str) -> Optional[User]:
         row = self._conn.execute(
-            "SELECT id, org_id, email, password_hash, role, created_at FROM users WHERE id = ?",
+            "SELECT id, org_id, email, password_hash, role, created_at, token_version, "
+            "must_change_password, deleted FROM users WHERE id = ?",
             (user_id,),
         ).fetchone()
         if row is None:
             return None
-        return User(
-            id=row["id"], org_id=row["org_id"], email=row["email"],
-            password_hash=row["password_hash"], role=row["role"],
-            created_at=row["created_at"],
-        )
+        return _row_to_user(row)
 
     def list_users(self, org_id: str) -> list[User]:
         rows = self._conn.execute(
-            "SELECT id, org_id, email, role, created_at FROM users WHERE org_id = ? ORDER BY created_at",
+            "SELECT id, org_id, email, password_hash, role, created_at, token_version, "
+            "must_change_password, deleted FROM users WHERE org_id = ? AND deleted = 0 "
+            "ORDER BY created_at",
             (org_id,),
         ).fetchall()
-        return [
-            User(id=r["id"], org_id=r["org_id"], email=r["email"], role=r["role"],
-                 created_at=r["created_at"])
-            for r in rows
-        ]
+        return [_row_to_user(r) for r in rows]
+
+    def update_password(self, user_id: str, new_hash: str) -> bool:
+        with self._lock:
+            cur = self._conn.execute(
+                "UPDATE users SET password_hash = ?, must_change_password = 0, "
+                "token_version = token_version + 1 WHERE id = ?",
+                (new_hash, user_id),
+            )
+            self._conn.commit()
+        return cur.rowcount > 0
+
+    def delete_user(self, user_id: str) -> bool:
+        """Soft delete: set deleted=1 and invalidate sessions."""
+        with self._lock:
+            cur = self._conn.execute(
+                "UPDATE users SET deleted = 1, token_version = token_version + 1 WHERE id = ?",
+                (user_id,),
+            )
+            self._conn.commit()
+        return cur.rowcount > 0
+
+    def update_user_role(self, user_id: str, role: str) -> bool:
+        with self._lock:
+            cur = self._conn.execute(
+                "UPDATE users SET role = ? WHERE id = ?",
+                (role, user_id),
+            )
+            self._conn.commit()
+        return cur.rowcount > 0
+
+    def count_admins(self, org_id: str) -> int:
+        row = self._conn.execute(
+            "SELECT COUNT(*) as c FROM users WHERE org_id = ? AND role = 'admin' AND deleted = 0",
+            (org_id,),
+        ).fetchone()
+        return row["c"] if row else 0
 
     # ----------------------------------------------------------- api keys
 
-    def create_api_key(self, org_id: str, label: str) -> ApiKey:
+    def create_api_key(self, org_id: str, label: str, scopes: list[str] | None = None) -> ApiKey:
         key = "mcp_live_" + uuid.uuid4().hex
-        api_key = ApiKey(key=key, org_id=org_id, label=label, created_at=time.time())
+        scopes = scopes or ["ingest"]
+        api_key = ApiKey(key=key, org_id=org_id, label=label, created_at=time.time(), scopes=scopes)
         with self._lock:
             self._conn.execute(
-                "INSERT INTO api_keys (key, org_id, label, created_at, revoked) "
-                "VALUES (?, ?, ?, ?, 0)",
-                (api_key.key, api_key.org_id, api_key.label, api_key.created_at),
+                "INSERT INTO api_keys (key, org_id, label, created_at, revoked, scopes) "
+                "VALUES (?, ?, ?, ?, 0, ?)",
+                (api_key.key, api_key.org_id, api_key.label, api_key.created_at,
+                 json.dumps(scopes)),
             )
             self._conn.commit()
         return api_key
 
     def validate_api_key(self, key: str) -> Optional[ApiKey]:
-        """Return the ApiKey if valid (exists and not revoked), else None."""
         row = self._conn.execute(
-            "SELECT key, org_id, label, created_at, revoked FROM api_keys WHERE key = ?",
+            "SELECT key, org_id, label, created_at, revoked, scopes FROM api_keys WHERE key = ?",
             (key,),
         ).fetchone()
         if row is None or row["revoked"]:
@@ -183,6 +231,7 @@ class Database:
         return ApiKey(
             key=row["key"], org_id=row["org_id"], label=row["label"],
             created_at=row["created_at"], revoked=bool(row["revoked"]),
+            scopes=json.loads(row["scopes"] or '["ingest"]'),
         )
 
     def revoke_api_key(self, key: str) -> bool:
@@ -193,25 +242,22 @@ class Database:
 
     def list_api_keys(self, org_id: str) -> list[ApiKey]:
         rows = self._conn.execute(
-            "SELECT key, org_id, label, created_at, revoked FROM api_keys "
+            "SELECT key, org_id, label, created_at, revoked, scopes FROM api_keys "
             "WHERE org_id = ? ORDER BY created_at",
             (org_id,),
         ).fetchall()
         return [
             ApiKey(key=r["key"], org_id=r["org_id"], label=r["label"],
-                   created_at=r["created_at"], revoked=bool(r["revoked"]))
+                   created_at=r["created_at"], revoked=bool(r["revoked"]),
+                   scopes=json.loads(r["scopes"] or '["ingest"]'))
             for r in rows
         ]
 
     # ----------------------------------------------------------- events
 
     def insert_event(self, org_id: str, entry: dict[str, Any]) -> bool:
-        """Insert an audit event. Idempotent on (org_id, seq): if an event
-        with the same seq already exists for this org, it's a no-op (upsert).
-        Returns True if inserted, False if duplicate (no-op)."""
         seq = entry.get("seq", 0)
         with self._lock:
-            # Check for duplicate.
             existing = self._conn.execute(
                 "SELECT 1 FROM events WHERE org_id = ? AND seq = ?", (org_id, seq)
             ).fetchone()
@@ -248,7 +294,6 @@ class Database:
         limit: int = 50,
         offset: int = 0,
     ) -> list[Event]:
-        """Query events for an org with optional filters. Always scoped by org_id."""
         sql = "SELECT * FROM events WHERE org_id = ?"
         params: list[Any] = [org_id]
         if decision:
@@ -289,7 +334,6 @@ class Database:
         return _row_to_event(row)
 
     def summary(self, org_id: str, *, start: Optional[str] = None, end: Optional[str] = None) -> dict[str, int]:
-        """Return summary counts for the dashboard cards."""
         sql = "SELECT decision, COUNT(*) as c FROM events WHERE org_id = ?"
         params: list[Any] = [org_id]
         if start:
@@ -305,6 +349,34 @@ class Database:
             counts[r["decision"]] = r["c"]
         counts["total"] = counts["allow"] + counts["deny"]
         return counts
+
+    def delete_old_events(self, days: int) -> int:
+        """Delete events older than N days. Returns count deleted."""
+        cutoff = time.time() - (days * 86400)
+        with self._lock:
+            cur = self._conn.execute(
+                "DELETE FROM events WHERE received_at < ?", (cutoff,)
+            )
+            self._conn.commit()
+        return cur.rowcount
+
+
+# Backward-compat alias (existing tests import Database).
+Database = SqliteStorage
+
+
+# ----------------------------------------------------------- helpers
+
+
+def _row_to_user(row: sqlite3.Row) -> User:
+    return User(
+        id=row["id"], org_id=row["org_id"], email=row["email"],
+        password_hash=row["password_hash"], role=row["role"],
+        created_at=row["created_at"],
+        token_version=row["token_version"] if "token_version" in row.keys() else 0,
+        must_change_password=bool(row["must_change_password"]) if "must_change_password" in row.keys() else False,
+        deleted=bool(row["deleted"]) if "deleted" in row.keys() else False,
+    )
 
 
 def _row_to_event(row: sqlite3.Row) -> Event:

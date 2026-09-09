@@ -27,6 +27,9 @@ class User:
     role: str        # "admin" | "analyst" | "viewer"
     created_at: float
     password_hash: Optional[str] = None   # None for SSO-only users
+    token_version: int = 0               # increment to invalidate sessions
+    must_change_password: bool = False    # force password change on next login
+    deleted: bool = False                # soft delete
 
 
 @dataclass
@@ -37,6 +40,7 @@ class ApiKey:
     label: str
     created_at: float
     revoked: bool = False
+    scopes: list[str] = field(default_factory=lambda: ["ingest"])  # ["ingest"] | ["read"] | both
 
 
 @dataclass

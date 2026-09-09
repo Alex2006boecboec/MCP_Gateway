@@ -24,14 +24,16 @@ from fastapi import FastAPI
 from mcp_shield.cloud.api_ingest import router as ingest_router
 from mcp_shield.cloud.auth import SessionManager, hash_password
 from mcp_shield.cloud.dashboard import router as dashboard_router
-from mcp_shield.cloud.db import Database
+from mcp_shield.cloud.storage_factory import create_storage
 
 
 def create_app(db_path: str | None = None, secret: str | None = None) -> FastAPI:
-    """Create and configure the FastAPI app. Used by tests and the entry point."""
-    if db_path is None:
-        db_path = os.environ.get("MCP_SHIELD_DB_PATH", "mcp_shield_cloud.db")
-    db = Database(db_path)
+    """Create and configure the FastAPI app. Used by tests and the entry point.
+
+    If db_path is given (tests), uses SQLite. Otherwise picks backend
+    from env DATABASE_URL (Postgres on Railway) or MCP_SHIELD_DB_PATH.
+    """
+    db = create_storage(db_path)
     app = FastAPI(title="MCP Shield Cloud Dashboard", version="5.0.0")
     app.state.db = db
     app.state.session_manager = SessionManager(secret_key=secret)
