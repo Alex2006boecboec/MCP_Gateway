@@ -13,6 +13,7 @@
         <th>Email</th>
         <th>Role</th>
         <th>Created</th>
+        <th>Actions</th>
       </tr>
     </thead>
     <tbody>
@@ -25,10 +26,29 @@
           {% else %}<span class="badge badge-deny">{{ u.role }}</span>{% endif %}
         </td>
         <td style="color: var(--text-muted); font-family: monospace; font-size: 13px;">{{ u.created_at | round(0) }}</td>
+        <td>
+          {% if session.user_id != u.id %}
+          <form method="post" action="/users/{{ u.id }}/role" style="display: inline-block;">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+            <select name="role" onchange="this.form.submit()" style="background: var(--bg); color: var(--text); border: 1px solid var(--border); border-radius: 6px; padding: 4px 8px; font-size: 12px;">
+              <option value="viewer" {% if u.role == 'viewer' %}selected{% endif %}>Viewer</option>
+              <option value="analyst" {% if u.role == 'analyst' %}selected{% endif %}>Analyst</option>
+              <option value="admin" {% if u.role == 'admin' %}selected{% endif %}>Admin</option>
+            </select>
+          </form>
+          <form method="post" action="/users/{{ u.id }}/delete" style="display: inline-block; margin-left: 8px;"
+                onsubmit="return confirm('Delete user {{ u.email }}? This cannot be undone.');">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+            <button type="submit" class="btn btn-danger btn-sm">Delete</button>
+          </form>
+          {% else %}
+          <span style="color: var(--text-muted); font-size: 12px;">(you)</span>
+          {% endif %}
+        </td>
       </tr>
       {% endfor %}
       {% if not users %}
-      <tr><td colspan="3"><div class="empty">No users yet</div></td></tr>
+      <tr><td colspan="4"><div class="empty">No users yet</div></td></tr>
       {% endif %}
     </tbody>
   </table>

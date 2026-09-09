@@ -13,6 +13,7 @@
         <th>Key</th>
         <th>Label</th>
         <th>Status</th>
+        <th>Scopes</th>
         <th>Actions</th>
       </tr>
     </thead>
@@ -29,6 +30,11 @@
           {% endif %}
         </td>
         <td>
+          {% for s in k.scopes %}
+          <span class="badge badge-approve" style="font-size: 11px; margin-right: 4px;">{{ s }}</span>
+          {% endfor %}
+        </td>
+        <td>
           {% if not k.revoked %}
           <form method="post" action="/keys/{{ k.key }}/revoke" style="display: inline;">
             <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
@@ -39,7 +45,7 @@
       </tr>
       {% endfor %}
       {% if not keys %}
-      <tr><td colspan="4"><div class="empty">No API keys yet. Create one below.</div></td></tr>
+      <tr><td colspan="5"><div class="empty">No API keys yet. Create one below.</div></td></tr>
       {% endif %}
     </tbody>
   </table>
@@ -52,6 +58,14 @@
     <div class="form-row" style="flex: 1; margin-bottom: 0;">
       <label>Label</label>
       <input type="text" name="label" placeholder="e.g. prod-proxy-1" required>
+    </div>
+    <div class="form-row" style="min-width: 160px; margin-bottom: 0;">
+      <label>Scopes</label>
+      <select name="scopes">
+        <option value="ingest">ingest (ship events)</option>
+        <option value="read">read (query events)</option>
+        <option value="ingest,read">ingest, read (both)</option>
+      </select>
     </div>
     <button type="submit" class="btn btn-primary">Generate Key</button>
   </form>

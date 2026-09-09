@@ -73,6 +73,18 @@ CREATE TABLE IF NOT EXISTS password_resets (
     used BOOLEAN DEFAULT FALSE,
     created_at DOUBLE PRECISION NOT NULL
 );
+CREATE TABLE IF NOT EXISTS dashboard_actions (
+    id SERIAL PRIMARY KEY,
+    org_id TEXT NOT NULL REFERENCES orgs(id),
+    actor_id TEXT NOT NULL REFERENCES users(id),
+    actor_email TEXT,
+    action TEXT NOT NULL,
+    target_type TEXT,
+    target_id TEXT,
+    detail TEXT,
+    created_at DOUBLE PRECISION NOT NULL
+);
+CREATE INDEX IF NOT EXISTS dashboard_actions_org ON dashboard_actions(org_id, created_at);
 """
 
 
@@ -504,6 +516,45 @@ class PostgresStorage:
                         (time.time(),),
                     )
                     return cur.rowcount
+        finally:
+            self._put(conn)
+
+    # ----------------------------------------------------------- dashboard audit
+
+    def log_action(self, org_id: str, actor_id: str, actor_email: str,
+                   action: str, target_type: str = "", target_id: str = "",
+                   detail: str = "") -> None:
+        conn = self._conn()
+        try:
+            with conn:
+                with conn.cursor() as cur:
+                    cur.execute(
+                        "INSERT INTO dashboard_actions (org_id, actor_id, actor_email, action, "
+                        "target_type, target_id, detail, created_at) "
+                        "VALUES (%s, %s, %s, %s, %s, %s, %s, %s)",
+                        (org_id, actor_id, actor_email, action, target_type, target_id, detail, time.time()),
+                    )
+        finally:
+            self._put(conn)
+
+    def query_actions(self, org_id: str, limit: int = 100, offset: int = 0) -> list[dict]:
+        conn = self._conn()
+        try:
+            with conn.cursor() as cur:
+                cur.execute(
+                    "SELECT id, org_id, actor_id, actor_email, action, target_type, target_id, detail, created_at "
+                    "FROM dashboard_actions WHERE org_id = %s ORDER BY created_at DESC LIMIT %s OFFSET %s",
+                    (org_id, limit, offset),
+                )
+                rows = cur.fetchall()
+            return [
+                {
+                    "id": r[0], "org_id": r[1], "actor_id": r[2], "actor_email": r[3],
+                    "action": r[4], "target_type": r[5], "target_id": r[6],
+                    "detail": r[7], "created_at": r[8],
+                }
+                for r in rows
+            ]
         finally:
             self._put(conn)
 

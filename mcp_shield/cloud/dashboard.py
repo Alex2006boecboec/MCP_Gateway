@@ -313,9 +313,52 @@ async def create_user(
     if role not in ("admin", "analyst", "viewer"):
         raise HTTPException(status_code=400, detail="invalid role")
     try:
-        db.create_user(session["org_id"], email, hash_password(password), role)
+        user = db.create_user(session["org_id"], email, hash_password(password), role)
+        db.log_action(session["org_id"], session["user_id"], session.get("email", ""),
+                       "user.create", "user", user.id, f"email={email}, role={role}")
     except Exception:
         raise HTTPException(status_code=400, detail="email already exists")
+    return RedirectResponse("/users", status_code=302)
+
+
+@router.post("/users/{user_id}/delete")
+async def delete_user(request: Request, user_id: str):
+    session = _require_role(request, "manage_users")
+    db = _get_db(request)
+    # Can't delete self.
+    if user_id == session["user_id"]:
+        raise HTTPException(status_code=400, detail="cannot delete your own account")
+    # Check user exists and belongs to same org.
+    target = db.get_user(user_id)
+    if target is None or target.org_id != session["org_id"]:
+        raise HTTPException(status_code=404, detail="user not found")
+    # Can't delete last admin.
+    if target.role == "admin" and db.count_admins(session["org_id"]) <= 1:
+        raise HTTPException(status_code=400, detail="cannot delete the last admin")
+    db.delete_user(user_id)
+    db.log_action(session["org_id"], session["user_id"], session.get("email", ""),
+                   "user.delete", "user", user_id, f"email={target.email}")
+    return RedirectResponse("/users", status_code=302)
+
+
+@router.post("/users/{user_id}/role")
+async def change_role(request: Request, user_id: str, role: str = Form(...)):
+    session = _require_role(request, "manage_users")
+    db = _get_db(request)
+    if role not in ("admin", "analyst", "viewer"):
+        raise HTTPException(status_code=400, detail="invalid role")
+    # Can't change own role (prevent self-demotion).
+    if user_id == session["user_id"]:
+        raise HTTPException(status_code=400, detail="cannot change your own role")
+    target = db.get_user(user_id)
+    if target is None or target.org_id != session["org_id"]:
+        raise HTTPException(status_code=404, detail="user not found")
+    # Can't demote last admin.
+    if target.role == "admin" and role != "admin" and db.count_admins(session["org_id"]) <= 1:
+        raise HTTPException(status_code=400, detail="cannot demote the last admin")
+    db.update_user_role(user_id, role)
+    db.log_action(session["org_id"], session["user_id"], session.get("email", ""),
+                   "user.role_change", "user", user_id, f"from={target.role}, to={role}")
     return RedirectResponse("/users", status_code=302)
 
 
@@ -331,10 +374,17 @@ def keys_page(request: Request):
 async def create_key(
     request: Request,
     label: str = Form(...),
+    scopes: str = Form("ingest"),
 ):
     session = _require_role(request, "manage_keys")
     db = _get_db(request)
-    key = db.create_api_key(session["org_id"], label)
+    # Parse scopes.
+    scope_list = [s.strip() for s in scopes.split(",") if s.strip() in ("ingest", "read")]
+    if not scope_list:
+        scope_list = ["ingest"]
+    key = db.create_api_key(session["org_id"], label, scopes=scope_list)
+    db.log_action(session["org_id"], session["user_id"], session.get("email", ""),
+                   "key.create", "api_key", key.key, f"label={label}, scopes={scope_list}")
     return RedirectResponse("/keys", status_code=302)
 
 
@@ -343,7 +393,23 @@ async def revoke_key(request: Request, key: str):
     session = _require_role(request, "manage_keys")
     db = _get_db(request)
     db.revoke_api_key(key)
+    db.log_action(session["org_id"], session["user_id"], session.get("email", ""),
+                   "key.revoke", "api_key", key, "")
     return RedirectResponse("/keys", status_code=302)
+
+
+# ----------------------------------------------------------- audit log
+
+
+@router.get("/audit", response_class=HTMLResponse)
+def audit_page(request: Request, page: int = 1):
+    session = _require_role(request, "manage_users")
+    db = _get_db(request)
+    limit = 100
+    offset = (page - 1) * limit
+    actions = db.query_actions(session["org_id"], limit=limit, offset=offset)
+    return templates.TemplateResponse(request, "audit.html",
+        _base_context(request, session) | {"actions": actions, "page": page})
 
 
 # ----------------------------------------------------------- settings (password change)

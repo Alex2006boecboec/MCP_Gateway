@@ -1,0 +1,41 @@
+{% extends "base.html" %}
+{% block title %}Audit Log - MCP Shield{% endblock %}
+{% block content %}
+<div class="page-header">
+  <h1>Audit Log</h1>
+  <p>All state-changing actions in this organization</p>
+</div>
+
+<div class="table-wrap">
+  <table>
+    <thead>
+      <tr>
+        <th>Time</th>
+        <th>Actor</th>
+        <th>Action</th>
+        <th>Target</th>
+        <th>Detail</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for a in actions %}
+      <tr>
+        <td style="color: var(--text-muted); font-family: monospace; font-size: 13px;">{{ a.created_at | round(0) }}</td>
+        <td>{{ a.actor_email or a.actor_id[:8] }}</td>
+        <td>
+          {% if 'delete' in a.action %}<span class="badge badge-deny">{{ a.action }}</span>
+          {% elif 'revoke' in a.action %}<span class="badge badge-deny">{{ a.action }}</span>
+          {% elif 'create' in a.action %}<span class="badge badge-allow">{{ a.action }}</span>
+          {% else %}<span class="badge">{{ a.action }}</span>{% endif %}
+        </td>
+        <td>{{ a.target_type }} {% if a.target_id %}<code style="font-size: 11px;">{{ a.target_id[:16] }}</code>{% endif %}</td>
+        <td style="color: var(--text-muted); font-size: 13px;">{{ a.detail or '' }}</td>
+      </tr>
+      {% endfor %}
+      {% if not actions %}
+      <tr><td colspan="5"><div class="empty">No actions recorded yet</div></td></tr>
+      {% endif %}
+    </tbody>
+  </table>
+</div>
+{% endblock %}

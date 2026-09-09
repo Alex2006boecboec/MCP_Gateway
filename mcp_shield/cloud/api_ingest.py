@@ -52,15 +52,15 @@ def _get_db(request: Request) -> Database:
     return db
 
 
-def _resolve_key(db: Database, authorization: Optional[str]) -> str:
-    """Validate the Bearer token and return the org_id."""
+def _resolve_key(db: Database, authorization: Optional[str]) -> tuple[str, list[str]]:
+    """Validate the Bearer token and return (org_id, scopes)."""
     if not authorization or not authorization.startswith("Bearer "):
         raise HTTPException(status_code=401, detail="missing or invalid Authorization header")
     key = authorization[len("Bearer "):]
     api_key = db.validate_api_key(key)
     if api_key is None:
         raise HTTPException(status_code=401, detail="invalid or revoked API key")
-    return api_key.org_id
+    return api_key.org_id, api_key.scopes
 
 
 @router.post("/ingest")
@@ -71,10 +71,14 @@ async def ingest(
     """Ingest a batch of audit events from a proxy.
 
     Body: {"entries": [ <AuditEntry dict>, ... ]}
-    Response: 200 {"accepted": N} | 401 | 413 | 429
+    Response: 200 {"accepted": N} | 401 | 403 | 413 | 429
     """
     db = _get_db(request)
-    org_id = _resolve_key(db, authorization)
+    org_id, scopes = _resolve_key(db, authorization)
+
+    # Check scope.
+    if "ingest" not in scopes:
+        raise HTTPException(status_code=403, detail="API key does not have 'ingest' scope")
 
     # Rate limit.
     if not _limiter.check(org_id):
@@ -102,3 +106,13 @@ async def ingest(
             accepted += 1
 
     return {"accepted": accepted}
+
+
+# API v1 alias (versioned endpoint for future compatibility).
+@router.post("/v1/ingest")
+async def ingest_v1(
+    request: Request,
+    authorization: Optional[str] = Header(None),
+):
+    """Versioned ingest endpoint (alias for /api/ingest)."""
+    return await ingest(request, authorization)

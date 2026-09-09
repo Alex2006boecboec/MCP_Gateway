@@ -74,6 +74,18 @@ CREATE TABLE IF NOT EXISTS password_resets (
     used INTEGER DEFAULT 0,
     created_at REAL NOT NULL
 );
+CREATE TABLE IF NOT EXISTS dashboard_actions (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    org_id TEXT NOT NULL REFERENCES orgs(id),
+    actor_id TEXT NOT NULL REFERENCES users(id),
+    actor_email TEXT,
+    action TEXT NOT NULL,
+    target_type TEXT,
+    target_id TEXT,
+    detail TEXT,
+    created_at REAL NOT NULL
+);
+CREATE INDEX IF NOT EXISTS dashboard_actions_org ON dashboard_actions(org_id, created_at);
 """
 
 
@@ -414,6 +426,38 @@ class SqliteStorage:
             )
             self._conn.commit()
         return cur.rowcount
+
+    # ----------------------------------------------------------- dashboard audit
+
+    def log_action(self, org_id: str, actor_id: str, actor_email: str,
+                   action: str, target_type: str = "", target_id: str = "",
+                   detail: str = "") -> None:
+        """Record a dashboard action for audit."""
+        with self._lock:
+            self._conn.execute(
+                "INSERT INTO dashboard_actions (org_id, actor_id, actor_email, action, "
+                "target_type, target_id, detail, created_at) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                (org_id, actor_id, actor_email, action, target_type, target_id, detail, time.time()),
+            )
+            self._conn.commit()
+
+    def query_actions(self, org_id: str, limit: int = 100, offset: int = 0) -> list[dict]:
+        """Query dashboard actions for an org."""
+        rows = self._conn.execute(
+            "SELECT id, org_id, actor_id, actor_email, action, target_type, target_id, detail, created_at "
+            "FROM dashboard_actions WHERE org_id = ? ORDER BY created_at DESC LIMIT ? OFFSET ?",
+            (org_id, limit, offset),
+        ).fetchall()
+        return [
+            {
+                "id": r["id"], "org_id": r["org_id"], "actor_id": r["actor_id"],
+                "actor_email": r["actor_email"], "action": r["action"],
+                "target_type": r["target_type"], "target_id": r["target_id"],
+                "detail": r["detail"], "created_at": r["created_at"],
+            }
+            for r in rows
+        ]
 
 
 # Backward-compat alias (existing tests import Database).
