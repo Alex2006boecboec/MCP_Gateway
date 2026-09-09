@@ -450,13 +450,15 @@ class Proxy:
         detection = getattr(processed, "_detection", None)  # type: ignore[attr-defined]
         chain = getattr(processed, "_chain", None)  # type: ignore[attr-defined]
         approval = getattr(processed, "_approval", None)  # type: ignore[attr-defined]
-        params = req.params or {}
+        # Use the PROCESSED (redacted) params, not the original request params,
+        # so secrets never leak into the audit log.
+        proc_params = processed.raw.get("params", {}) or {}
         self.audit.log(
             decision=decision.action,
-            server=str(params.get("server", "unknown")),
-            tool=str(params.get("name", params.get("tool", "unknown"))),
+            server=str(proc_params.get("server", "unknown")),
+            tool=str(proc_params.get("name", proc_params.get("tool", "unknown"))),
             # Args are already redacted (we redact before policy eval).
-            args=params.get("arguments", {k: v for k, v in params.items() if k not in ("server", "name", "tool")}),
+            args=proc_params.get("arguments", {k: v for k, v in proc_params.items() if k not in ("server", "name", "tool")}),
             reason=decision.reason,
             rule=decision.rule_name,
             redactions=redactions,
