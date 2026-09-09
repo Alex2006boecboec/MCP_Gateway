@@ -564,6 +564,24 @@ class PostgresStorage:
         finally:
             self._put(conn)
 
+    # ----------------------------------------------------------- GDPR
+
+    def delete_org_data(self, org_id: str) -> None:
+        """Cascade delete all org data (events, users, keys, actions, org itself)."""
+        conn = self._conn()
+        try:
+            with conn:
+                with conn.cursor() as cur:
+                    cur.execute("DELETE FROM events WHERE org_id = %s", (org_id,))
+                    cur.execute("DELETE FROM dashboard_actions WHERE org_id = %s", (org_id,))
+                    cur.execute("DELETE FROM password_resets WHERE user_id IN "
+                                "(SELECT id FROM users WHERE org_id = %s)", (org_id,))
+                    cur.execute("DELETE FROM api_keys WHERE org_id = %s", (org_id,))
+                    cur.execute("DELETE FROM users WHERE org_id = %s", (org_id,))
+                    cur.execute("DELETE FROM orgs WHERE id = %s", (org_id,))
+        finally:
+            self._put(conn)
+
 
 # ----------------------------------------------------------- helpers
 

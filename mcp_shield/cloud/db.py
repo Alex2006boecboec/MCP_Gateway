@@ -467,6 +467,21 @@ class SqliteStorage:
             for r in rows
         ]
 
+    # ----------------------------------------------------------- GDPR
+
+    def delete_org_data(self, org_id: str) -> None:
+        """Cascade delete all org data (events, users, keys, actions, org itself).
+        Used for GDPR right-to-be-forgotten."""
+        with self._lock:
+            self._conn.execute("DELETE FROM events WHERE org_id = ?", (org_id,))
+            self._conn.execute("DELETE FROM dashboard_actions WHERE org_id = ?", (org_id,))
+            self._conn.execute("DELETE FROM password_resets WHERE user_id IN "
+                                "(SELECT id FROM users WHERE org_id = ?)", (org_id,))
+            self._conn.execute("DELETE FROM api_keys WHERE org_id = ?", (org_id,))
+            self._conn.execute("DELETE FROM users WHERE org_id = ?", (org_id,))
+            self._conn.execute("DELETE FROM orgs WHERE id = ?", (org_id,))
+            self._conn.commit()
+
 
 # Backward-compat alias (existing tests import Database).
 Database = SqliteStorage

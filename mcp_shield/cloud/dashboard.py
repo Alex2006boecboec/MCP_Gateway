@@ -35,6 +35,20 @@ templates = Jinja2Templates(directory="mcp_shield/cloud/templates")
 COOKIE_NAME = "mcp_shield_session"
 
 
+@router.get("/health")
+def health_check(request: Request):
+    """Health check endpoint. No auth required. Returns 200 or 503."""
+    db = _get_db(request)
+    try:
+        if hasattr(db, "_conn"):
+            db._conn.execute("SELECT 1").fetchone()
+        from fastapi.responses import JSONResponse
+        return JSONResponse({"status": "ok", "database": "connected"})
+    except Exception as e:
+        from fastapi.responses import JSONResponse
+        return JSONResponse({"status": "error", "detail": str(e)}, status_code=503)
+
+
 def _is_https() -> bool:
     return os.environ.get("MCP_SHIELD_HTTPS", "") == "1"
 
@@ -539,3 +553,56 @@ async def reset_password(
     db.use_password_reset(token)
 
     return RedirectResponse("/login", status_code=302)
+
+
+# ----------------------------------------------------------- GDPR: export & delete
+
+
+@router.get("/org/export")
+def export_org_data(request: Request):
+    """Export all org data as a JSON file (GDPR right to data portability)."""
+    session = _require_role(request, "manage_users")
+    db = _get_db(request)
+    org_id = session["org_id"]
+    org = db.get_org(org_id)
+    users = db.list_users(org_id)
+    keys = db.list_api_keys(org_id)
+    events = db.query_events(org_id, limit=10000)
+    actions = db.query_actions(org_id, limit=10000)
+
+    data = {
+        "org": {"id": org.id, "name": org.name, "created_at": org.created_at} if org else None,
+        "users": [{"id": u.id, "email": u.email, "role": u.role, "created_at": u.created_at} for u in users],
+        "api_keys": [{"key": k.key[:20] + "...", "label": k.label, "scopes": k.scopes,
+                      "revoked": k.revoked, "created_at": k.created_at} for k in keys],
+        "events": [{"id": e.id, "seq": e.seq, "ts": e.ts, "decision": e.decision,
+                    "server": e.server, "tool": e.tool, "reason": e.reason} for e in events],
+        "actions": actions,
+    }
+    import json
+    content = json.dumps(data, indent=2, default=str)
+    return Response(
+        content=content,
+        media_type="application/json",
+        headers={"Content-Disposition": f'attachment; filename="org_{org_id[:8]}_export.json"'},
+    )
+
+
+@router.post("/org/delete")
+async def delete_org(
+    request: Request,
+    confirm: str = Form(...),
+):
+    """Delete all org data (GDPR right to erasure). Requires typing 'DELETE' to confirm."""
+    session = _require_role(request, "manage_users")
+    db = _get_db(request)
+    if confirm != "DELETE":
+        raise HTTPException(status_code=400, detail="Type DELETE to confirm")
+    org_id = session["org_id"]
+    db.log_action(org_id, session["user_id"], session.get("email", ""),
+                   "org.delete", "org", org_id, "GDPR erasure")
+    db.delete_org_data(org_id)
+    # Logout (org is gone, session invalid).
+    resp = RedirectResponse("/login", status_code=302)
+    resp.delete_cookie(COOKIE_NAME)
+    return resp

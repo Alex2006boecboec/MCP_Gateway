@@ -20,6 +20,7 @@ import os
 import sys
 
 from fastapi import FastAPI
+from fastapi.responses import JSONResponse
 
 from mcp_shield.cloud.api_ingest import router as ingest_router
 from mcp_shield.cloud.auth import SessionManager, hash_password
@@ -40,25 +41,50 @@ def create_app(db_path: str | None = None, secret: str | None = None) -> FastAPI
     from env DATABASE_URL (Postgres on Railway) or MCP_SHIELD_DB_PATH.
     """
     db = create_storage(db_path)
-    app = FastAPI(title="MCP Shield Cloud Dashboard", version="5.1.0")
+    app = FastAPI(title="MCP Shield Cloud Dashboard", version="5.4.0")
     app.state.db = db
     app.state.session_manager = SessionManager(secret_key=secret)
 
     # Middleware order: outermost first (executed last on response).
-    # Security headers on all responses.
     app.add_middleware(SecurityHeadersMiddleware)
-    # CORS only for /api/ paths.
     app.add_middleware(ApiCorsMiddleware)
-    # Request size limits.
     app.add_middleware(RequestSizeLimitMiddleware, default_max=2_000_000, ingest_max=1_000_000)
-    # CSRF protection for form POSTs (API exempt).
     app.add_middleware(CSRFMiddleware)
 
     app.include_router(ingest_router)
     app.include_router(dashboard_router)
 
     _bootstrap(db)
+    _start_retention_task(db)
     return app
+
+
+def _start_retention_task(db) -> None:
+    """Start a background thread that periodically deletes old events.
+
+    Runs every hour. Retention period from MCP_SHIELD_RETENTION_DAYS env
+    (default 90 days). Disabled if MCP_SHIELD_RETENTION_DAYS=0.
+    """
+    import logging
+    import threading
+
+    logger = logging.getLogger("mcp_shield.cloud.retention")
+
+    def _retention_loop():
+        import time
+        while True:
+            try:
+                days = int(os.environ.get("MCP_SHIELD_RETENTION_DAYS", "90"))
+                if days > 0:
+                    deleted = db.delete_old_events(days)
+                    if deleted > 0:
+                        logger.info("retention: deleted %d events older than %d days", deleted, days)
+            except Exception as e:
+                logger.error("retention task error: %s", e)
+            time.sleep(3600)  # 1 hour
+
+    thread = threading.Thread(target=_retention_loop, daemon=True, name="retention")
+    thread.start()
 
 
 def _bootstrap(db: Database) -> None:
