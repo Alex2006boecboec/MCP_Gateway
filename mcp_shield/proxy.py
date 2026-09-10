@@ -58,7 +58,7 @@ class ProxyConfig:
     policy_path: Path
     audit_path: Path
     server_command: list[str]   # the command to spawn the real MCP server
-    fail_closed: bool = True    # if True, deny when no rule matches and default is deny
+    fail_closed: bool = False   # if True, force defaults.action=deny regardless of YAML
     redact_secrets: bool = True
     detector_config: Optional[DetectorConfig] = None  # None = detector disabled
     graph_config: Optional[GraphConfig] = None       # None = graph disabled
@@ -77,6 +77,10 @@ class Proxy:
     def __init__(self, config: ProxyConfig):
         self.config = config
         self.policy = PolicyEngine(load_policy(config.policy_path))
+        # --fail-closed (or ProxyConfig.fail_closed) forces deny-by-default
+        # regardless of YAML defaults.action.
+        if config.fail_closed:
+            self.policy.policy.default_action = "deny"
         self.redactor = SecretRedactor() if config.redact_secrets else None
         self.audit = AuditLogger(config.audit_path, shipper=config.shipper)
         self.detector = Detector(config.detector_config) if config.detector_config else None
@@ -160,10 +164,13 @@ class Proxy:
                 return
             # 2. Apply the security pipeline to the request.
             decision, processed = self._inspect_request(req)
-            if decision.action == "deny":
+            # Forward only allow / redact / approve (post-approval). Unknown
+            # actions fail closed. "redact" means forward after SecretRedactor
+            # already masked secrets (policy-level redact has no extra step).
+            if decision.action not in ("allow", "redact", "approve"):
                 # Block: respond with an error directly to the agent.
                 # Map the rule_name to the right JSON-RPC error code.
-                if decision.rule_name == "validator":
+                if decision.rule_name == "validator" or ".validate" in (decision.rule_name or ""):
                     code = ERR_VALIDATION_FAILED
                 elif decision.rule_name == "injection-detector":
                     code = ERR_INJECTION_DETECTED
@@ -173,6 +180,9 @@ class Proxy:
                     code = ERR_APPROVAL_DENIED if "timeout" not in decision.reason else ERR_APPROVAL_TIMEOUT
                 else:
                     code = ERR_POLICY_DENIED
+                # Normalize unexpected actions to deny for audit clarity.
+                if decision.action != "deny":
+                    decision = Decision("deny", decision.reason or f"unknown action {decision.action!r}", decision.rule_name)
                 err = make_error_response(
                     req.id if req.id is not None else 0,
                     code,
@@ -210,6 +220,15 @@ class Proxy:
                 continue
             # 6. Forward the (possibly redacted) response to the agent.
             write_message(sys.stdout.buffer, processed_resp)
+            # Merge response-side detection / redactions into the request-side
+            # audit entry so allow-path injections & response redactions are recorded.
+            resp_detection = getattr(processed_resp, "_detection", None)
+            if resp_detection is not None:
+                processed._detection = resp_detection  # type: ignore[attr-defined]
+            resp_reds = getattr(processed_resp, "_redactions", None)
+            if resp_reds:
+                existing = getattr(processed, "_redactions", []) or []
+                processed._redactions = list(existing) + list(resp_reds)  # type: ignore[attr-defined]
             self._audit(req, decision, processed, blocked=False)
 
     # ------------------------------------------------------- inspect (req)
@@ -282,7 +301,9 @@ class Proxy:
                     decision = g_decision
                     processed._chain = _chain_to_dict(chain) if chain else None  # type: ignore[attr-defined]
             except Exception as exc:
+                # Fail-closed: a graph error must not silently disable chain blocking.
                 log.warning("graph check_sink error: %s", exc)
+                decision = Decision("deny", f"capability graph error: {exc}", "capability-graph")
 
         # 2c. Approval flow: hold high-risk calls for human approval. Runs
         # LAST on the request side (after policy + graph). Only consulted
@@ -328,6 +349,13 @@ class Proxy:
             )
         else:
             processed = resp
+
+        # Stash response redactions for audit (allow path merges these).
+        if resp_red_objs:
+            processed._redactions = [  # type: ignore[attr-defined]
+                {"name": r.name, "field": r.field, "replacement": r.replacement}
+                for r in resp_red_objs
+            ]
 
         # 2. Injection detection (Phase 2).
         if self.detector is not None and isinstance(processed.result, dict):

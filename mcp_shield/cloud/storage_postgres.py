@@ -52,6 +52,7 @@ CREATE TABLE IF NOT EXISTS events (
     id SERIAL PRIMARY KEY,
     org_id TEXT NOT NULL REFERENCES orgs(id),
     seq INTEGER,
+    proxy_id TEXT NOT NULL DEFAULT '',
     ts TEXT,
     decision TEXT,
     server TEXT,
@@ -67,7 +68,7 @@ CREATE TABLE IF NOT EXISTS events (
 );
 CREATE INDEX IF NOT EXISTS events_org_ts ON events(org_id, ts);
 CREATE INDEX IF NOT EXISTS events_org_decision ON events(org_id, decision);
-CREATE UNIQUE INDEX IF NOT EXISTS events_org_seq_unique ON events(org_id, seq) WHERE seq IS NOT NULL;
+CREATE UNIQUE INDEX IF NOT EXISTS events_org_proxy_seq_unique ON events(org_id, proxy_id, seq) WHERE seq IS NOT NULL;
 CREATE TABLE IF NOT EXISTS password_resets (
     token TEXT PRIMARY KEY,
     user_id TEXT NOT NULL REFERENCES users(id),
@@ -393,18 +394,19 @@ class PostgresStorage:
 
     def insert_event(self, org_id: str, entry: dict[str, Any]) -> bool:
         seq = entry.get("seq", 0)
+        proxy_id = entry.get("proxy_id") or ""
         conn = self._conn()
         try:
             with conn:
                 with conn.cursor() as cur:
                     cur.execute(
-                        "INSERT INTO events (org_id, seq, ts, decision, server, tool, args, "
+                        "INSERT INTO events (org_id, seq, proxy_id, ts, decision, server, tool, args, "
                         "reason, rule, redactions, detection, chain, approval, received_at) "
-                        "VALUES (%s, %s, %s, %s, %s, %s, %s::jsonb, %s, %s, %s::jsonb, "
+                        "VALUES (%s, %s, %s, %s, %s, %s, %s, %s::jsonb, %s, %s, %s::jsonb, "
                         "%s::jsonb, %s::jsonb, %s::jsonb, %s) "
-                        "ON CONFLICT (org_id, seq) WHERE seq IS NOT NULL DO NOTHING",
+                        "ON CONFLICT (org_id, proxy_id, seq) WHERE seq IS NOT NULL DO NOTHING",
                         (
-                            org_id, seq, entry.get("ts", ""), entry.get("decision", ""),
+                            org_id, seq, proxy_id, entry.get("ts", ""), entry.get("decision", ""),
                             entry.get("server", ""), entry.get("tool", ""),
                             json.dumps(entry.get("args", {}), ensure_ascii=False),
                             entry.get("reason", ""), entry.get("rule", ""),
@@ -417,7 +419,7 @@ class PostgresStorage:
                     )
                     return cur.rowcount > 0
         except psycopg2.IntegrityError:
-            return False  # duplicate (org_id, seq)
+            return False  # duplicate (org_id, proxy_id, seq)
         finally:
             self._put(conn)
 
@@ -509,9 +511,11 @@ class PostgresStorage:
                 cur.execute(sql, params)
                 rows = cur.fetchall()
             counts = {"allow": 0, "deny": 0}
+            total = 0
             for r in rows:
                 counts[r[0]] = r[1]
-            counts["total"] = counts["allow"] + counts["deny"]
+                total += r[1]
+            counts["total"] = total
             return counts
         finally:
             self._put(conn)

@@ -21,6 +21,7 @@ from mcp_shield.cloud.middleware import CSRF_COOKIE_NAME
 from mcp_shield.cloud.passwords import validate_password
 from mcp_shield.cloud.rbac import can
 from mcp_shield.cloud.rate_limit import (
+    check_forgot_allowed,
     check_login_allowed,
     check_register_allowed,
     get_login_delay,
@@ -549,6 +550,12 @@ async def forgot_password(
     email: str = Form(...),
 ):
     db = _get_db(request)
+    ip = request.client.host if request.client else "unknown"
+    allowed, reason = check_forgot_allowed(email, ip)
+    if not allowed:
+        return templates.TemplateResponse(request, "forgot.html",
+            _base_context(request) | {"error": reason, "sent": False}, status_code=429)
+
     user = db.get_user_by_email(email)
     if user is not None:
         # Generate reset token (TTL 1 hour).
@@ -556,12 +563,13 @@ async def forgot_password(
         # Send reset email via SMTP (or log in dev mode).
         from mcp_shield.cloud.email import get_email_service
         email_service = get_email_service()
-        email_service.send_password_reset(email, token)
-        # Log only a truncated hint (never the full token).
+        sent = email_service.send_password_reset(email, token)
+        # Log only a truncated hint (never the full token). Never surface
+        # SMTP failure to the client (would confirm the account exists).
         import logging
         logging.getLogger("mcp_shield.cloud").info(
-            "password reset token generated for %s (token prefix: %s...)",
-            email, token[:8],
+            "password reset token generated for %s (token prefix: %s..., sent=%s)",
+            email, token[:8], sent,
         )
     # Always show "sent" message (don't leak whether email exists).
     return templates.TemplateResponse(request, "forgot.html",
@@ -670,6 +678,7 @@ async def delete_org(
 @router.get("/plans", response_class=HTMLResponse)
 def plans_page(request: Request):
     """Show available subscription plans and current plan."""
+    import os
     session = _require_user(request)
     db = _get_db(request)
     org = db.get_org(session["org_id"])
@@ -677,8 +686,14 @@ def plans_page(request: Request):
     current_plan = get_plan(org.plan if org else "free")
     # Calculate current month usage.
     usage = db.count_events_current_month(session["org_id"])
+    allow_self_upgrade = os.environ.get("MCP_SHIELD_ALLOW_SELF_UPGRADE", "").lower() in ("1", "true", "yes")
     return templates.TemplateResponse(request, "plans.html",
-        _base_context(request, session) | {"plans": PLANS, "current_plan": current_plan, "usage": usage})
+        _base_context(request, session) | {
+            "plans": PLANS,
+            "current_plan": current_plan,
+            "usage": usage,
+            "allow_self_upgrade": allow_self_upgrade,
+        })
 
 
 @router.post("/plans/upgrade")
@@ -686,7 +701,19 @@ def upgrade_plan(
     request: Request,
     plan: str = Form(...),
 ):
-    """Upgrade the org's plan (admin only)."""
+    """Upgrade the org's plan (admin only).
+
+    Self-serve upgrades are disabled unless MCP_SHIELD_ALLOW_SELF_UPGRADE=1,
+    because there is no payment integration yet — otherwise free→enterprise
+    would be a single form POST.
+    """
+    import os
+    if os.environ.get("MCP_SHIELD_ALLOW_SELF_UPGRADE", "").lower() not in ("1", "true", "yes"):
+        raise HTTPException(
+            status_code=403,
+            detail="Self-serve plan upgrades are disabled. Set MCP_SHIELD_ALLOW_SELF_UPGRADE=1 "
+                   "for demos, or contact sales for a paid plan.",
+        )
     session = _require_role(request, "manage_org")
     db = _get_db(request)
     from mcp_shield.cloud.plans import PLANS, can_upgrade_to

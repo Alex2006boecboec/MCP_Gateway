@@ -28,6 +28,7 @@ import hashlib
 import json
 import os
 import time
+import uuid
 from dataclasses import dataclass, field, asdict
 from pathlib import Path
 from typing import Any, Optional
@@ -50,15 +51,18 @@ class AuditEntry:
     detection: Optional[dict[str, Any]] = None   # Phase 2: detector signals
     chain: Optional[dict[str, Any]] = None       # Phase 3: detected chain
     approval: Optional[dict[str, Any]] = None    # Phase 4: approval outcome
+    proxy_id: str = ""                           # Phase 5: unique per proxy process (multi-proxy dedup)
     prev_hash: str = ZERO_HASH
     this_hash: str = ""
 
     def canonical_bytes(self) -> bytes:
         """Stable serialization for hashing — fields excluded from the hash
-        are `this_hash` (it IS the hash) and `prev_hash` (chained separately)."""
+        are `this_hash` (it IS the hash) and `proxy_id` (cloud dedupe metadata
+        that must not break verification of older log lines). `prev_hash` stays
+        in the hash input so the chain is unbreakable."""
         d = asdict(self)
         d.pop("this_hash", None)
-        # Keep prev_hash IN the hash input so the chain is unbreakable.
+        d.pop("proxy_id", None)
         return json.dumps(d, sort_keys=True, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
 
     def compute_hash(self) -> str:
@@ -72,11 +76,14 @@ class AuditLogger:
     CloudShipper. The shipper is best-effort and never blocks the proxy.
     """
 
-    def __init__(self, path: str | Path, shipper=None):
+    def __init__(self, path: str | Path, shipper=None, proxy_id: str | None = None):
         self.path = Path(path)
         self._seq = 0
         self._prev_hash = ZERO_HASH
         self._shipper = shipper
+        # Stable per-process id so multiple proxies under one org don't
+        # collide on (org_id, seq) cloud dedupe.
+        self.proxy_id = proxy_id or uuid.uuid4().hex
         # If the log exists, resume the chain from the last entry.
         self._resume()
 
@@ -94,6 +101,9 @@ class AuditLogger:
                     continue
                 self._seq = int(entry.get("seq", self._seq))
                 self._prev_hash = entry.get("this_hash", ZERO_HASH)
+                # Prefer the proxy_id already written to this log (stable across restarts).
+                if entry.get("proxy_id"):
+                    self.proxy_id = str(entry["proxy_id"])
 
     def log(
         self,
@@ -122,6 +132,7 @@ class AuditLogger:
             detection=detection,
             chain=chain,
             approval=approval,
+            proxy_id=self.proxy_id,
             prev_hash=self._prev_hash,
         )
         entry.this_hash = entry.compute_hash()

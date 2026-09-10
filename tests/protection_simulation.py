@@ -7,7 +7,7 @@ import json, shutil, subprocess, sys, tempfile, threading, time
 from pathlib import Path
 
 ROOT = Path(__file__).parent.parent
-PY = str(ROOT / ".venv" / "Scripts" / "python.exe")
+PY = sys.executable
 PASS = 0
 FAIL = 0
 

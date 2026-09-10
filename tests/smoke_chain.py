@@ -9,6 +9,7 @@ Scenario:
 Run: python tests/smoke_chain.py
 """
 import json
+import sys
 import subprocess
 import tempfile
 import time
@@ -16,7 +17,7 @@ from pathlib import Path
 
 HERE = Path(__file__).parent
 ROOT = HERE.parent
-PY = str(ROOT / ".venv" / "Scripts" / "python.exe")
+PY = sys.executable
 
 # Fake MCP server: read_file returns an AWS key; http_request echoes args.
 FAKE_SERVER = r'''

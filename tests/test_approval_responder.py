@@ -92,10 +92,19 @@ def test_malformed_then_fixed(tmp_path):
     assert resp.decision == "approve"
 
 
-def test_parse_response_approve():
-    r = _parse_response("id1", {"decision": "approve", "by": "alice"})
-    assert r is not None
-    assert r.decision == "approve"
+def test_malformed_decision_ignored_then_timeout(tmp_path):
+    """Valid JSON with an unknown decision is ignored; poller keeps waiting."""
+    resp_dir = tmp_path / "responses"
+    resp_dir.mkdir()
+    req = _req(expires_in=0.35)
+    (resp_dir / "abc123.json").write_text(
+        json.dumps({"decision": "maybe", "by": "alice"}), encoding="utf-8"
+    )
+    t0 = time.time()
+    resp = wait_for_response(req, str(resp_dir), poll_interval=0.05, timeout=0.4)
+    elapsed = time.time() - t0
+    assert resp is None
+    assert elapsed >= 0.25
 
 
 def test_parse_response_deny():

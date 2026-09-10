@@ -10,6 +10,7 @@ rate-limits per key. Never stores secrets (args are already redacted).
 from __future__ import annotations
 
 import json
+import threading
 import time
 from typing import Any, Optional
 
@@ -42,6 +43,7 @@ class IngestEntry(BaseModel):
     detection: Optional[dict[str, Any]] = None
     chain: Optional[dict[str, Any]] = None
     approval: Optional[dict[str, Any]] = None
+    proxy_id: str = Field(default="", max_length=_MAX_STRING_LEN)
 
     def to_db_dict(self) -> dict[str, Any]:
         """Convert to dict for db.insert_event()."""
@@ -56,6 +58,7 @@ class IngestEntry(BaseModel):
             "reason": self.reason, "rule": self.rule,
             "redactions": self.redactions, "detection": self.detection,
             "chain": self.chain, "approval": self.approval,
+            "proxy_id": self.proxy_id,
         }
 
 
@@ -69,19 +72,21 @@ class _RateLimiter:
 
     def __init__(self):
         self._buckets: dict[str, list[float]] = {}
+        self._lock = threading.Lock()
 
     def check(self, key: str) -> bool:
         """Return True if the request is allowed, False if rate-limited."""
         now = time.time()
         window = 60.0
-        if key not in self._buckets:
-            self._buckets[key] = []
-        # Drop timestamps older than the window.
-        self._buckets[key] = [t for t in self._buckets[key] if now - t < window]
-        if len(self._buckets[key]) >= _MAX_REQUESTS_PER_MINUTE:
-            return False
-        self._buckets[key].append(now)
-        return True
+        with self._lock:
+            if key not in self._buckets:
+                self._buckets[key] = []
+            # Drop timestamps older than the window.
+            self._buckets[key] = [t for t in self._buckets[key] if now - t < window]
+            if len(self._buckets[key]) >= _MAX_REQUESTS_PER_MINUTE:
+                return False
+            self._buckets[key].append(now)
+            return True
 
 
 _limiter = _RateLimiter()

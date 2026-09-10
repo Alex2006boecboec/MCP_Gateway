@@ -54,6 +54,7 @@ CREATE TABLE IF NOT EXISTS events (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     org_id TEXT NOT NULL REFERENCES orgs(id),
     seq INTEGER,
+    proxy_id TEXT NOT NULL DEFAULT '',
     ts TEXT,
     decision TEXT,
     server TEXT,
@@ -69,6 +70,7 @@ CREATE TABLE IF NOT EXISTS events (
 );
 CREATE INDEX IF NOT EXISTS events_org_ts ON events(org_id, ts);
 CREATE INDEX IF NOT EXISTS events_org_decision ON events(org_id, decision);
+CREATE UNIQUE INDEX IF NOT EXISTS events_org_proxy_seq ON events(org_id, proxy_id, seq);
 CREATE TABLE IF NOT EXISTS password_resets (
     token TEXT PRIMARY KEY,
     user_id TEXT NOT NULL REFERENCES users(id),
@@ -109,6 +111,13 @@ def _ensure_columns(conn: sqlite3.Connection) -> None:
     existing_org = {row[1] for row in conn.execute("PRAGMA table_info(orgs)").fetchall()}
     if "plan" not in existing_org:
         conn.execute("ALTER TABLE orgs ADD COLUMN plan TEXT DEFAULT 'free'")
+    # proxy_id for multi-proxy dedup (org_id, proxy_id, seq).
+    existing_events = {row[1] for row in conn.execute("PRAGMA table_info(events)").fetchall()}
+    if "proxy_id" not in existing_events:
+        conn.execute("ALTER TABLE events ADD COLUMN proxy_id TEXT NOT NULL DEFAULT ''")
+    conn.execute(
+        "CREATE UNIQUE INDEX IF NOT EXISTS events_org_proxy_seq ON events(org_id, proxy_id, seq)"
+    )
     conn.commit()
 
 
@@ -323,18 +332,20 @@ class SqliteStorage:
 
     def insert_event(self, org_id: str, entry: dict[str, Any]) -> bool:
         seq = entry.get("seq", 0)
+        proxy_id = entry.get("proxy_id") or ""
         with self._lock:
             existing = self._conn.execute(
-                "SELECT 1 FROM events WHERE org_id = ? AND seq = ?", (org_id, seq)
+                "SELECT 1 FROM events WHERE org_id = ? AND proxy_id = ? AND seq = ?",
+                (org_id, proxy_id, seq),
             ).fetchone()
             if existing is not None:
                 return False
             self._conn.execute(
-                "INSERT INTO events (org_id, seq, ts, decision, server, tool, args, "
+                "INSERT INTO events (org_id, seq, proxy_id, ts, decision, server, tool, args, "
                 "reason, rule, redactions, detection, chain, approval, received_at) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 (
-                    org_id, seq, entry.get("ts", ""), entry.get("decision", ""),
+                    org_id, seq, proxy_id, entry.get("ts", ""), entry.get("decision", ""),
                     entry.get("server", ""), entry.get("tool", ""),
                     json.dumps(entry.get("args", {}), ensure_ascii=False),
                     entry.get("reason", ""), entry.get("rule", ""),
@@ -410,10 +421,12 @@ class SqliteStorage:
             params.append(end)
         sql += " GROUP BY decision"
         rows = self._conn.execute(sql, params).fetchall()
-        counts = {"allow": 0, "deny": 0}
+        counts: dict[str, int] = {"allow": 0, "deny": 0}
+        total = 0
         for r in rows:
             counts[r["decision"]] = r["c"]
-        counts["total"] = counts["allow"] + counts["deny"]
+            total += r["c"]
+        counts["total"] = total
         return counts
 
     def delete_old_events(self, days: int) -> int:

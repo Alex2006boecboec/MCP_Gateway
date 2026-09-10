@@ -115,13 +115,16 @@ def can_upgrade_to(current: str, target: str) -> bool:
 
 
 def check_event_limit(plan_name: str, current_count: int) -> tuple[bool, str]:
-    """Check if an org can accept a new event based on plan limits.
+    """Check if an org can accept events given a projected monthly total.
+
+    `current_count` is the projected total AFTER the new batch would be
+    inserted (i.e. existing + len(batch)). Allowed when projected <= max.
 
     Returns (allowed, reason). If allowed is False, reason explains why.
     """
     plan = get_plan(plan_name)
     if plan.max_events_per_month == -1:
         return True, "unlimited"
-    if current_count >= plan.max_events_per_month:
+    if current_count > plan.max_events_per_month:
         return False, f"monthly event limit reached ({plan.max_events_per_month} events/month on {plan.display_name} plan)"
     return True, ""

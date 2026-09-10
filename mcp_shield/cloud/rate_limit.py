@@ -77,6 +77,7 @@ class RateLimiter:
 # Global rate limiters.
 login_limiter = RateLimiter()
 register_limiter = RateLimiter()
+forgot_limiter = RateLimiter()
 
 # Login rate limit parameters.
 LOGIN_MAX_PER_EMAIL = 5          # failed attempts per window
@@ -89,6 +90,11 @@ LOGIN_DELAY_SECONDS = 2          # delay per failure above threshold
 # Register rate limit parameters.
 REGISTER_MAX_PER_IP = 3           # registrations per hour
 REGISTER_WINDOW = 3600            # 1 hour
+
+# Forgot-password rate limits (email bomb / token table fill protection).
+FORGOT_MAX_PER_IP = 10            # requests per hour per IP
+FORGOT_MAX_PER_EMAIL = 3          # requests per hour per email
+FORGOT_WINDOW = 3600              # 1 hour
 
 
 def check_login_allowed(email: str, ip: str) -> tuple[bool, str]:
@@ -133,4 +139,15 @@ def check_register_allowed(ip: str) -> tuple[bool, str]:
     ip_key = f"register:ip:{ip}"
     if not register_limiter.check(ip_key, REGISTER_MAX_PER_IP, REGISTER_WINDOW):
         return False, "Too many registrations from this IP. Try again later."
+    return True, ""
+
+
+def check_forgot_allowed(email: str, ip: str) -> tuple[bool, str]:
+    """Check if a password-reset request is allowed. Returns (allowed, reason)."""
+    ip_key = f"forgot:ip:{ip}"
+    email_key = f"forgot:email:{email.lower()}"
+    if not forgot_limiter.check(ip_key, FORGOT_MAX_PER_IP, FORGOT_WINDOW):
+        return False, "Too many password reset requests from this IP. Try again later."
+    if not forgot_limiter.check(email_key, FORGOT_MAX_PER_EMAIL, FORGOT_WINDOW):
+        return False, "Too many password reset requests for this email. Try again later."
     return True, ""

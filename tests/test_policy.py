@@ -37,7 +37,7 @@ def test_load_full_policy(tmp_path):
         rules:
           - name: block-ssrf
             when: {tool_regex: '.*fetch.*'}
-            check: {arg_regex: '169\.254\.169\.254'}
+            check: {arg_regex: '169\\.254\\.169\\.254'}
             action: deny
             reason: "metadata IP blocked"
     """)
@@ -103,7 +103,7 @@ def test_ssrf_rule_blocks_metadata_ip(tmp_path):
         rules:
           - name: block-ssrf
             when: {tool_regex: '.*fetch.*'}
-            check: {arg_regex: '169\.254\.169\.254'}
+            check: {arg_regex: '169\\.254\\.169\\.254'}
             action: deny
             reason: "metadata IP blocked"
     """)
@@ -117,7 +117,7 @@ def test_ssrf_rule_allows_safe_url(tmp_path):
         rules:
           - name: block-ssrf
             when: {tool_regex: '.*fetch.*'}
-            check: {arg_regex: '169\.254\.169\.254'}
+            check: {arg_regex: '169\\.254\\.169\\.254'}
             action: deny
             reason: "metadata IP blocked"
     """)
@@ -135,6 +135,36 @@ def test_url_validator_blocks_internal(tmp_path):
     d = engine.evaluate(server="fetch", tool="fetch_url", arguments={"url": "http://10.0.0.1/"})
     assert d.action == "deny"
     assert "internal" in d.reason.lower()
+
+
+def test_url_validator_blocks_rfc1918_172(tmp_path):
+    """RFC1918 172.16.0.0/12 must be blocked (SSRF)."""
+    engine = _engine(tmp_path, """
+        servers:
+          fetch:
+            tools:
+              fetch_url: {validate: url, block_internal: true}
+    """)
+    for url in (
+        "http://172.16.0.1/",
+        "https://172.31.255.255/admin",
+        "http://192.168.1.1/",
+        "http://127.0.0.1/",
+        "http://localhost/secret",
+    ):
+        d = engine.evaluate(server="fetch", tool="fetch_url", arguments={"url": url})
+        assert d.action == "deny", f"expected deny for {url}, got {d.action}: {d.reason}"
+
+
+def test_url_validator_allows_public(tmp_path):
+    engine = _engine(tmp_path, """
+        servers:
+          fetch:
+            tools:
+              fetch_url: {validate: url, block_internal: true}
+    """)
+    d = engine.evaluate(server="fetch", tool="fetch_url", arguments={"url": "https://example.com/api"})
+    assert d.action == "allow"
 
 
 def test_path_validator_blocks_traversal(tmp_path):

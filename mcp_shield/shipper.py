@@ -13,7 +13,9 @@ Design:
   - Background thread retries spooled events.
   - TLS verification: rejects http:// by default (env MCP_SHIELD_ALLOW_HTTP_CLOUD=1
     to allow for dev). Custom CA cert via ca_cert_path.
-  - Idempotent: the cloud DB dedupes on (org_id, seq).
+  - Idempotent: the cloud DB dedupes on (org_id, proxy_id, seq).
+  - On HTTP 200 the whole batch is considered processed (duplicates are
+    fine — do not treat `accepted` as a prefix length).
   - Thread-safe (a lock guards the buffer).
 """
 
@@ -161,8 +163,16 @@ class CloudShipper:
                 req = urllib.request.Request(url, data=body, headers=headers, method="POST")
                 with urllib.request.urlopen(req, timeout=self.config.timeout, context=ssl_ctx) as resp:
                     if resp.status == 200:
-                        data = json.loads(resp.read().decode("utf-8"))
-                        return data.get("accepted", len(batch))
+                        # Whole batch was processed by the cloud. `accepted`
+                        # counts newly inserted rows (duplicates return false
+                        # server-side) and must NOT be treated as a prefix
+                        # length — otherwise duplicate-heavy batches re-spool
+                        # forever. Rely on (org_id, proxy_id, seq) dedupe.
+                        try:
+                            json.loads(resp.read().decode("utf-8"))
+                        except Exception:
+                            pass
+                        return len(batch)
                     logger.warning("shipper: HTTP %d from cloud", resp.status)
                     return 0
             except urllib.error.HTTPError as e:

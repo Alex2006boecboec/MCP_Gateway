@@ -30,7 +30,7 @@
     </ul>
     {% if name == current_plan.name %}
       <div style="margin-top: 16px; text-align: center; padding: 8px; background: var(--primary-dim); border-radius: var(--radius-sm); color: #fff; font-size: 13px; font-weight: 600;">Current Plan</div>
-    {% elif name != 'enterprise' %}
+    {% elif name != 'enterprise' and allow_self_upgrade %}
       <form action="/plans/upgrade" method="POST" style="margin-top: 16px">
         <input type="hidden" name="plan" value="{{ name }}">
         <input type="hidden" name="csrf_token" value="{{ csrf_token }}">

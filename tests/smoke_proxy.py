@@ -12,7 +12,7 @@ from pathlib import Path
 
 HERE = Path(__file__).parent
 ROOT = HERE.parent
-PY = str(ROOT / ".venv" / "Scripts" / "python.exe")
+PY = sys.executable
 
 # A tiny fake MCP server: reads JSON-RPC from stdin, writes to stdout.
 FAKE_SERVER = r'''

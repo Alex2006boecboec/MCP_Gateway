@@ -183,6 +183,31 @@ def test_summary(db):
     assert s["allow"] == 1
 
 
+def test_summary_includes_all_decisions(db):
+    """total must count approve/redact, not only allow+deny."""
+    org = db.create_org("Acme")
+    db.insert_event(org.id, {"seq": 1, "ts": "t", "decision": "deny", "server": "s", "tool": "t", "args": {}, "reason": "x", "rule": "r"})
+    db.insert_event(org.id, {"seq": 2, "ts": "t", "decision": "allow", "server": "s", "tool": "t", "args": {}, "reason": "x", "rule": "r"})
+    db.insert_event(org.id, {"seq": 3, "ts": "t", "decision": "approve", "server": "s", "tool": "t", "args": {}, "reason": "x", "rule": "r"})
+    db.insert_event(org.id, {"seq": 4, "ts": "t", "decision": "redact", "server": "s", "tool": "t", "args": {}, "reason": "x", "rule": "r"})
+    s = db.summary(org.id)
+    assert s["total"] == 4
+    assert s["deny"] == 1
+    assert s["allow"] == 1
+    assert s["approve"] == 1
+    assert s["redact"] == 1
+
+
+def test_multi_proxy_same_seq_accepted(db):
+    """Two proxies under one org may both use seq=1."""
+    org = db.create_org("Acme")
+    assert db.insert_event(org.id, {"seq": 1, "proxy_id": "proxy-a", "ts": "t", "decision": "allow", "server": "s", "tool": "t", "args": {}, "reason": "x", "rule": "r"})
+    assert db.insert_event(org.id, {"seq": 1, "proxy_id": "proxy-b", "ts": "t", "decision": "deny", "server": "s", "tool": "t", "args": {}, "reason": "x", "rule": "r"})
+    assert db.count_events(org.id) == 2
+    # Same proxy + seq is still a duplicate.
+    assert not db.insert_event(org.id, {"seq": 1, "proxy_id": "proxy-a", "ts": "t", "decision": "allow", "server": "s", "tool": "t", "args": {}, "reason": "x", "rule": "r"})
+
+
 def test_event_with_detection_chain_approval(db):
     """An event with Phase 2-4 fields round-trips through the DB."""
     org = db.create_org("Acme")

@@ -3,6 +3,7 @@
 Run: python tests/smoke_injection.py
 """
 import json
+import sys
 import subprocess
 import tempfile
 import time
@@ -10,7 +11,7 @@ from pathlib import Path
 
 HERE = Path(__file__).parent
 ROOT = HERE.parent
-PY = str(ROOT / ".venv" / "Scripts" / "python.exe")
+PY = sys.executable
 
 # Fake MCP server: returns an injected response for tools/call.
 FAKE_SERVER = r'''

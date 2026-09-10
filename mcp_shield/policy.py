@@ -225,18 +225,59 @@ class PolicyEngine:
 
     @staticmethod
     def _looks_internal(value: str) -> bool:
+        """Return True if value looks like an internal/metadata URL or host.
+
+        Covers loopback, RFC1918 (10/8, 172.16/12, 192.168/16), link-local,
+        localhost, and cloud metadata endpoints.
+        """
+        import ipaddress
+        from urllib.parse import urlparse
+
         v = value.strip().lower()
-        if v.startswith("http://169.254.") or v.startswith("https://169.254."):
+        # Cloud metadata endpoints (host or anywhere in string).
+        if "169.254.169.254" in v or "metadata.google.internal" in v:
             return True
-        if v.startswith("http://127.") or v.startswith("https://127."):
+
+        # Extract host from URL if present; otherwise treat whole string as host.
+        host = v
+        if "://" in v:
+            try:
+                parsed = urlparse(v if "://" in v else f"http://{v}")
+                host = (parsed.hostname or "").lower()
+            except Exception:
+                host = v
+        else:
+            # Bare host:port or path-ish — take before first '/' or ':'.
+            host = v.split("/")[0].split(":")[0]
+
+        if not host:
+            return False
+        if host == "localhost" or host.endswith(".localhost"):
             return True
-        if v.startswith("http://10.") or v.startswith("https://10."):
+        if host.endswith(".local") or host.endswith(".internal"):
             return True
-        if v.startswith("http://192.168.") or v.startswith("https://192.168."):
-            return True
-        if v.startswith("http://localhost") or v.startswith("https://localhost"):
-            return True
-        # Cloud metadata endpoints.
-        if "169.254.169.254" in v:
-            return True
-        return False
+
+        # Strip brackets from IPv6 literals.
+        if host.startswith("[") and host.endswith("]"):
+            host = host[1:-1]
+
+        try:
+            ip = ipaddress.ip_address(host)
+        except ValueError:
+            # Not an IP — check dotted prefixes for partial/unparsed hosts.
+            if host.startswith(("10.", "127.", "192.168.", "169.254.")):
+                return True
+            # 172.16.0.0/12 → 172.16–172.31
+            if host.startswith("172."):
+                parts = host.split(".")
+                if len(parts) >= 2 and parts[1].isdigit() and 16 <= int(parts[1]) <= 31:
+                    return True
+            return False
+
+        return bool(
+            ip.is_private
+            or ip.is_loopback
+            or ip.is_link_local
+            or ip.is_reserved
+            or ip.is_multicast
+        )

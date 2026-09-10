@@ -44,7 +44,15 @@ def wait_for_response(
         if resp_path.exists():
             try:
                 data = json.loads(resp_path.read_text(encoding="utf-8"))
-                return _parse_response(request.request_id, data)
+                parsed = _parse_response(request.request_id, data)
+                if parsed is None:
+                    log.warning(
+                        "approval: invalid decision in %s (ignoring; human can fix)",
+                        resp_path,
+                    )
+                    time.sleep(max(poll_interval, 0.5))
+                    continue
+                return parsed
             except (json.JSONDecodeError, OSError) as exc:
                 log.warning(
                     "approval: malformed response file %s: %s (ignoring; human can fix)",

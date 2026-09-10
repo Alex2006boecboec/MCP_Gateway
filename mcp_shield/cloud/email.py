@@ -10,8 +10,9 @@ Configuration (env vars):
   MCP_SHIELD_SMTP_USER       - SMTP username
   MCP_SHIELD_SMTP_PASSWORD   - SMTP password / API key
   MCP_SHIELD_SMTP_FROM       - From email address (e.g. noreply@yourdomain.com)
-  MCP_SHIELD_SMPT_FROM_NAME  - From display name (default "MCP Shield")
-  MCP_SHIELD_SMTP_USE_TLS    - "true" for STARTTLS (default), "false" to disable
+  MCP_SHIELD_SMTP_FROM_NAME  - From display name (default "MCP Shield")
+  MCP_SHIELD_SMTP_USE_TLS    - "true" for STARTTLS on port 587 (default)
+  MCP_SHIELD_SMTP_SSL        - "true" to force SMTP_SSL (implicit TLS); auto-enabled for port 465
   MCP_SHIELD_APP_URL         - Base URL of the dashboard (for reset links)
                                e.g. https://mcp-shield.up.railway.app
 
@@ -45,6 +46,7 @@ class EmailService:
         from_addr: Optional[str] = None,
         from_name: str = "MCP Shield",
         use_tls: bool = True,
+        use_ssl: bool = False,
         app_url: str = "http://localhost:8000",
     ):
         self.host = host
@@ -54,20 +56,26 @@ class EmailService:
         self.from_addr = from_addr or "noreply@mcp-shield.local"
         self.from_name = from_name
         self.use_tls = use_tls
+        # Port 465 → implicit TLS (SMTP_SSL); otherwise STARTTLS when use_tls.
+        self.use_ssl = use_ssl or port == 465
         self.app_url = app_url.rstrip("/")
         self.enabled = host is not None
 
     @classmethod
     def from_env(cls) -> "EmailService":
         """Create an EmailService from environment variables."""
+        port = int(os.environ.get("MCP_SHIELD_SMTP_PORT", "587"))
+        ssl_env = os.environ.get("MCP_SHIELD_SMTP_SSL", "").lower()
+        use_ssl = ssl_env in ("1", "true", "yes") or port == 465
         return cls(
             host=os.environ.get("MCP_SHIELD_SMTP_HOST"),
-            port=int(os.environ.get("MCP_SHIELD_SMTP_PORT", "587")),
+            port=port,
             user=os.environ.get("MCP_SHIELD_SMTP_USER"),
             password=os.environ.get("MCP_SHIELD_SMTP_PASSWORD"),
             from_addr=os.environ.get("MCP_SHIELD_SMTP_FROM"),
             from_name=os.environ.get("MCP_SHIELD_SMTP_FROM_NAME", "MCP Shield"),
             use_tls=os.environ.get("MCP_SHIELD_SMTP_USE_TLS", "true").lower() == "true",
+            use_ssl=use_ssl,
             app_url=os.environ.get("MCP_SHIELD_APP_URL", "http://localhost:8000"),
         )
 
@@ -98,27 +106,37 @@ class EmailService:
         if html_body:
             msg.attach(MIMEText(html_body, "html", "utf-8"))
 
+        server = None
         try:
-            if self.use_tls:
-                server = smtplib.SMTP(self.host, self.port, timeout=30)
-                server.ehlo()
-                context = ssl.create_default_context()
-                server.starttls(context=context)
+            context = ssl.create_default_context()
+            if self.use_ssl:
+                server = smtplib.SMTP_SSL(self.host, self.port, timeout=30, context=context)
                 server.ehlo()
             else:
                 server = smtplib.SMTP(self.host, self.port, timeout=30)
                 server.ehlo()
+                if self.use_tls:
+                    server.starttls(context=context)
+                    server.ehlo()
 
             if self.user and self.password:
                 server.login(self.user, self.password)
 
             server.sendmail(self.from_addr, [to], msg.as_string())
-            server.quit()
             log.info("email sent to %s: %s", to, subject)
             return True
         except Exception as e:
             log.error("email send failed to %s: %s", to, e)
             return False
+        finally:
+            if server is not None:
+                try:
+                    server.quit()
+                except Exception:
+                    try:
+                        server.close()
+                    except Exception:
+                        pass
 
     def send_password_reset(self, to: str, token: str) -> bool:
         """Send a password reset email with a reset link."""

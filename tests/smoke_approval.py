@@ -9,6 +9,7 @@ Scenarios:
 Run: python tests/smoke_approval.py
 """
 import json
+import sys
 import subprocess
 import tempfile
 import threading
@@ -17,7 +18,7 @@ from pathlib import Path
 
 HERE = Path(__file__).parent
 ROOT = HERE.parent
-PY = str(ROOT / ".venv" / "Scripts" / "python.exe")
+PY = sys.executable
 
 # Fake MCP server: echoes the tool name back.
 FAKE_SERVER = r'''
