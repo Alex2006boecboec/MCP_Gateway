@@ -57,8 +57,11 @@ mcp-shield = "mcp_shield.cli:main"
 mcp-shield-cloud = "mcp_shield.cloud.server:main"
 
 [project.urls]
-Homepage = "https://github.com/Alex2006boecboec/mcp-shield"
-Documentation = "https://github.com/Alex2006boecboec/mcp-shield#readme"
+Homepage = "https://github.com/Alex2006boecboec/MCP_Gateway"
+Documentation = "https://github.com/Alex2006boecboec/MCP_Gateway#readme"
+Repository = "https://github.com/Alex2006boecboec/MCP_Gateway"
+Issues = "https://github.com/Alex2006boecboec/MCP_Gateway/issues"
+Changelog = "https://github.com/Alex2006boecboec/MCP_Gateway/blob/main/CHANGELOG.md"
 
 [tool.setuptools.packages.find]
 where = ["."]

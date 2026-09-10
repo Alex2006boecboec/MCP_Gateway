@@ -1,40 +1,47 @@
 # MCP Shield
 
-**Security gateway for the Model Context Protocol.** Intercepts AI agent tool calls, enforces policy, detects prompt injection, redacts secrets, tracks cross-server data-flow chains, holds high-risk calls for human approval, and writes a tamper-evident audit log.
+**Open-source security gateway for the Model Context Protocol (MCP).**
 
-> ⚠️ **Status: Phase 5 (alpha)** — policy engine, secret redaction, audit logging, transparent proxy, multi-layer injection detection, capability-graph chain detection, human-in-the-loop approval flow, and multi-tenant cloud dashboard with compliance reports are implemented.
+Sit it in front of any MCP server. It intercepts tool calls, enforces a deterministic YAML policy, redacts secrets, detects prompt injection, blocks cross-tool exfiltration chains, can hold high-risk calls for human approval, and writes a tamper-evident audit log.
+
+> ⚠️ **Status: `v0.1.0-alpha` (free / MIT)** — ready for early adopters and self-hosted use. Not a turnkey commercial SaaS. See [Known limitations](docs/KNOWN_LIMITATIONS.md).
+
+```bash
+pip install mcp-shield
+mcp-shield --policy policies/default.yaml --detect-injection --track-chains --fail-closed \
+  -- -- npx -y @modelcontextprotocol/server-filesystem ~/docs
+```
 
 ---
 
 ## Why
 
-The Model Context Protocol (MCP) lets AI agents (Claude, Cursor, LangChain agents) call external tools — filesystem, databases, shell, HTTP, APIs. The protocol has **no security layer**: agents can call any tool with any arguments, MCP servers can be malicious (tool poisoning), and tool responses go straight into the agent's context (prompt injection).
+MCP lets AI agents (Claude, Cursor, LangChain, …) call external tools — filesystem, databases, shell, HTTP. The protocol has **no security layer**: agents can call any tool with any arguments, MCP servers can be malicious, and tool responses go straight into the model context.
 
-MCP Shield is a proxy that sits between the agent and MCP servers, applying a security pipeline to every tool call.
+### What MCP Shield blocks
 
-### Attacks MCP Shield prevents
-
-| Attack | Real-world example | How we block it |
-|---|---|---|
-| Tool poisoning | [microsoft/autogen#7427](https://github.com/microsoft/autogen/issues/7427) — RCE via unsigned tool definitions | Scan tool descriptions on connect, freeze hash (rug-pull detection) *(planned)* |
-| Prompt injection via response | [anthropics/claude-code#58138](https://github.com/anthropics/claude-code/issues/58138) | Multi-layer detector on every tool response ✅ |
-| Command injection | [railwayapp/railway-mcp-server#19](https://github.com/railwayapp/railway-mcp-server/issues/19) | Argument validators (path / URL / command allowlists) ✅ |
-| Cross-server exfiltration | ChainCaps (arXiv), MCP-Lattice | Capability graph + taint tracking ✅ |
-| SSRF | [modelcontextprotocol/servers#4497](https://github.com/modelcontextprotocol/servers/pull/4497) (still open!) | URL validator blocks internal/metadata IPs ✅ |
-| Secret leakage | — | Secret redactor masks AWS/GCP/GitHub/Slack/OpenAI keys ✅ |
-| No central visibility | — | Multi-tenant cloud dashboard with compliance reports ✅ |
+| Attack | How we block it |
+|---|---|
+| Prompt injection via tool responses | Multi-layer detector (regex + heuristics; optional ML) ✅ |
+| Command / arg injection | Path / URL / command validators ✅ |
+| SSRF (metadata & RFC1918) | URL validator with `block_internal` ✅ |
+| Cross-server exfiltration | Capability graph + taint tracking ✅ |
+| Secret leakage into logs/context | Secret redactor (AWS/GCP/GitHub/Slack/OpenAI/PEM/…) ✅ |
+| High-risk tools without a human | Approval queue (file-based + optional webhook) ✅ |
+| No audit trail | Hash-chained JSONL audit log ✅ |
+| Tool poisoning / rug-pull | Description scanning helps; full hash-freeze *(planned)* |
 
 ---
 
 ## Quickstart
 
-### Install
+### 1. Install
 
 ```bash
 pip install mcp-shield
 ```
 
-### Wrap an MCP server
+### 2. Wrap an MCP server
 
 Point your MCP client at `mcp-shield` instead of the real server. Everything after `--` is the real server command:
 
@@ -44,18 +51,22 @@ mcp-shield \
   --audit audit.jsonl \
   --detect-injection \
   --track-chains \
-  --require-approval \
-  --approval-dir approvals \
-  --approval-timeout 120 \
-  --cloud-url https://shield.example.com \
-  --cloud-key mcp_live_... \
+  --fail-closed \
   -- \
   npx -y @modelcontextprotocol/server-filesystem /home/me
 ```
 
-`--detect-injection` enables prompt injection detection (regex + heuristics, deterministic, no extra deps). `--track-chains` enables the capability graph, which tracks data flow across tool calls and blocks dangerous cross-server chains (e.g. read a secret file then send its contents to an external URL). `--require-approval` holds high-risk tool calls for human approval via a file-based queue (with optional Slack/Teams webhook). Optional ML layers (embeddings + LLM judge) need `pip install mcp-shield[detector]` and are configured via a policy/SDK.
+| Flag | Purpose |
+|---|---|
+| `--detect-injection` | Regex + heuristics (no extra deps) |
+| `--track-chains` | Cross-call taint / exfil chain blocking |
+| `--fail-closed` | Deny when no rule matches (recommended) |
+| `--require-approval` | Hold high-risk calls for a human |
+| `--cloud-url` / `--cloud-key` | Optional: ship events to a self-hosted dashboard |
 
-### Claude Desktop config
+Optional ML layers: `pip install mcp-shield[detector]`.
+
+### 3. Claude Desktop / Cursor-style config
 
 ```json
 {
@@ -63,23 +74,23 @@ mcp-shield \
     "filesystem": {
       "command": "mcp-shield",
       "args": [
-        "--policy", "C:/Users/me/policies/default.yaml",
-        "--audit", "C:/Users/me/.mcp-shield/audit.jsonl",
+        "--policy", "/absolute/path/to/policies/default.yaml",
+        "--audit", "/absolute/path/to/audit.jsonl",
+        "--detect-injection",
+        "--track-chains",
+        "--fail-closed",
         "--",
-        "npx", "-y", "@modelcontextprotocol/server-filesystem", "C:/Users/me"
+        "npx", "-y", "@modelcontextprotocol/server-filesystem", "/absolute/path/to/allowed/dir"
       ]
     }
   }
 }
 ```
 
-### Verify the audit log
+### 4. Verify the audit log
 
 ```bash
-# Every line is one decision. The hash chain makes the log tamper-evident.
 tail -f audit.jsonl | jq .
-
-# Verify integrity:
 python -c "from mcp_shield.audit import AuditLogger; print(AuditLogger('audit.jsonl').verify())"
 ```
 
@@ -89,7 +100,7 @@ python -c "from mcp_shield.audit import AuditLogger; print(AuditLogger('audit.js
 
 ```yaml
 defaults:
-  action: allow          # or "deny" for fail-closed mode
+  action: allow          # or "deny" / use --fail-closed
 
 servers:
   filesystem:
@@ -110,109 +121,43 @@ rules:
     reason: "SSRF to cloud metadata endpoint blocked"
 ```
 
-See [`policies/default.yaml`](policies/default.yaml) for a secure-by-default policy.
+See [`policies/default.yaml`](policies/default.yaml) for a secure-by-default starter policy.
+
+**Design principle:** the policy engine is **deterministic** — no LLM is consulted for allow/deny. Prompt injection cannot talk the gateway into changing policy. Optional LLMs only advise inside the injection detector.
 
 ---
 
 ## Architecture
 
 ```
-AI Agent → [MCP SECURITY GATEWAY] → MCP Servers
+AI Agent → [MCP SHIELD] → MCP Server(s)
 
-Gateway pipeline (every tools/call):
-  1. Secret Redactor   — mask secrets in args (before logging/forwarding)
-  2. Policy Engine     — deterministic allow/deny (YAML rules, fail-closed)
-  3. Injection Detector — scan args & responses for prompt injection ✅
-  4. Capability Graph  — taint tracking, cross-server chain detection ✅
-  5. Approval Flow     — human-in-the-loop for high-risk calls ✅
-  6. Audit Logger      — hash-chained JSONL, tamper-evident
-  7. Cloud Shipper     — batch audit events to the cloud dashboard ✅
+Every tools/call:
+  1. Secret Redactor
+  2. Policy Engine
+  3. Injection Detector
+  4. Capability Graph (taint / chains)
+  5. Approval Flow (optional)
+  6. Audit Logger (hash chain)
+  7. Cloud Shipper (optional)
 ```
 
-**Design principle:** the policy engine is **deterministic** — no LLM is ever consulted for a policy decision. Prompt injection cannot bypass it. LLMs are only used in the optional Layer 4 of the injection detector, never for the final allow/deny.
+Details: [`docs/architecture.md`](docs/architecture.md) · phases 2–5 under [`docs/`](docs/).
 
-### Injection detection (Phase 2)
+---
 
-4 layers, 2 mandatory + 2 optional. The final block/allow is a deterministic threshold over a numeric score.
+## Optional: self-hosted cloud dashboard
 
-| Layer | Type | Deps | Default |
-|---|---|---|---|
-| 0. Regex | mandatory, deterministic | stdlib | on |
-| 1. Heuristics | mandatory, deterministic | stdlib | on |
-| 2. Embeddings | optional, semantic | sentence-transformers | off |
-| 3. LLM judge | optional, advisory | httpx + API key | off |
-
-Layer 0–1 catch 90%+ of injections instantly (microseconds, no ML). Layer 2–3 only run on the ambiguous "suspicious" band (score 0.5–0.9). A confirmed Layer 0 hit blocks immediately without loading any model. See [`docs/phase2_plan.md`](docs/phase2_plan.md) for the full design.
-
-### Capability graph (Phase 3)
-
-The capability graph is what no single-call scanner can see: **cross-server data-flow chains**. It tracks what each tool can do (its *capabilities*) and what sensitive data it read (*taints*), then blocks when a later call sends that data somewhere dangerous.
-
-- **Capabilities**: each tool is tagged with read/write/send/exec capabilities, inferred from its description (with a static registry for well-known MCP servers).
-- **Taints**: when a read call returns a secret (detected via the redactor's in-memory matches, sensitive file paths, or env-var lines), a *taint* is created — a fingerprint of the secret value (sha256, truncated). **The secret itself is never stored.**
-- **Chains**: when a later call is a dangerous sink (network send, exec) and its arguments contain a value whose fingerprint matches an active taint, a dangerous chain is detected and blocked.
-
-| Chain rule | Source | Sink | Severity |
-|---|---|---|---|
-| secret-exfiltration | read:secret | network:send | block |
-| env-exfiltration | read:env | network:send | block |
-| secret-to-exec | read:secret | exec:command | block |
-| env-to-exec | read:env | exec:command | block |
-| db-to-exfiltration | read:database | network:send | block |
-| secret-to-write | read:secret | write:filesystem | review |
-| file-to-exec | read:filesystem | exec:command | review |
-| network-to-exec | read:network | exec:command | review |
-
-Memory is bounded (LRU eviction + TTL expiry) and the graph resets on each new agent session. See [`docs/phase3_plan.md`](docs/phase3_plan.md) for the full design.
-
-### Approval flow (Phase 4)
-
-Some calls are too dangerous to auto-allow but too useful to auto-deny: `rm -rf`, `exec` with untrusted args, external POST, a "review"-severity chain. Phase 4 **holds** these calls and asks a human to approve or deny them. On timeout → fail-closed (deny).
-
-- **Triggers**: a policy rule with `action: approve`, a risk rule in the policy's `approval` section (tool_regex + arg_regex), or a graph "review" chain (optional).
-- **File-based queue** (zero deps): the proxy writes `approvals/pending/<id>.json` (args already redacted); a human or Slack bot writes `approvals/responses/<id>.json` with `{"decision": "approve"|"deny", "by": "..."}`.
-- **Optional webhook**: `--approval-webhook` posts a notification to a Slack/Teams incoming webhook (best-effort; the file queue is the source of truth).
-- **Fail-closed**: timeout → `ERR_APPROVAL_TIMEOUT`; deny → `ERR_APPROVAL_DENIED`; policy `approve` with approval disabled → DENY (loud misconfig signal).
-
-```yaml
-approval:
-  require_for_review_chains: true
-  risk_rules:
-    - name: high-risk-exec
-      tool_regex: ".*exec|.*run|.*shell"
-      reason: "exec-like tool requires approval"
-    - name: destructive-file
-      tool_regex: ".*delete|.*remove|.*rm"
-      arg_regex: "rm|delete|remove"
-      reason: "destructive file operation requires approval"
-```
-
-See [`docs/phase4_plan.md`](docs/phase4_plan.md) for the full design.
-
-### Cloud dashboard (Phase 5)
-
-A multi-tenant SaaS dashboard that collects audit events from all your proxies, provides role-based access (admin / analyst / viewer), and generates compliance reports (SOC2, ISO27001, 152-ФЗ).
-
-- **Multi-tenant**: every query is scoped by `org_id` — org A cannot see org B's events.
-- **RBAC**: admin (full access), analyst (events + reports), viewer (events only). Unknown roles are denied by default (fail-closed).
-- **Auth**: password-based (pbkdf2_hmac, stdlib) with signed session cookies (itsdangerous). SSO/OIDC is stubbed (`/sso/login` returns 501 in MVP).
-- **Compliance reports**: SOC2 (security), ISO27001 (Annex A controls), 152-ФЗ (PII exfiltration + approval audit). Downloadable as CSV.
-- **CloudShipper** (proxy side): batches audit events in memory, flushes every 5s or 20 events, retries with exponential backoff, never blocks the proxy. Idempotent (cloud dedupes on `(org_id, seq)`).
-- **Zero new mandatory deps**: cloud server uses FastAPI + Jinja2 + itsdangerous (install via `pip install mcp-shield[cloud]`).
+Central multi-tenant UI for audit events, RBAC, and compliance report exports.
+This is **optional** — the proxy works fully offline.
 
 ```bash
-# Start the cloud dashboard (first run creates a default admin):
-pip install mcp-shield[cloud]
-mcp-shield-cloud  # → http://127.0.0.1:8000
-# Default login: admin@mcp-shield.local / admin (CHANGE IMMEDIATELY!)
-
-# Point a proxy at the cloud:
-mcp-shield --policy policy.yaml --cloud-url http://127.0.0.1:8000 --cloud-key mcp_live_... -- <server>
+pip install "mcp-shield[cloud]"
+mcp-shield-cloud   # → http://127.0.0.1:8000
+# First boot: admin@mcp-shield.local / admin  → change immediately
 ```
 
-See [`docs/phase5_plan.md`](docs/phase5_plan.md) for the full design.
-
-See [`docs/architecture.md`](docs/architecture.md) for the full design.
+Then point a proxy with `--cloud-url` and `--cloud-key`.
 
 ---
 
@@ -220,17 +165,24 @@ See [`docs/architecture.md`](docs/architecture.md) for the full design.
 
 | Phase | Status | Scope |
 |---|---|---|
-| 1. Foundation | ✅ | Proxy, policy engine, secret redaction, audit log, CLI |
-| 2. Injection detection | ✅ | Regex + heuristics (deterministic); optional embeddings + LLM judge |
-| 3. Capability graph | ✅ | Cross-server taint tracking, chain detection (killer-feature) |
-| 4. Approval flow | ✅ | Slack/Teams webhook for high-risk calls, file-based queue, fail-closed |
-| 5. Cloud dashboard | ✅ | Multi-tenant, RBAC, SSO, compliance reports (commercial tier) |
+| 1. Foundation | ✅ | Proxy, policy, redaction, audit, CLI |
+| 2. Injection detection | ✅ | Regex + heuristics; optional embeddings/LLM |
+| 3. Capability graph | ✅ | Cross-call taint / chain detection |
+| 4. Approval flow | ✅ | File queue + webhook, fail-closed |
+| 5. Cloud dashboard | ✅ alpha | Multi-tenant UI, RBAC, reports (SSO stubbed) |
+| 6. Tool freeze / rug-pull | 🔜 | Hash tool definitions on connect |
 
 ---
 
+## Security
+
+- Report vulnerabilities privately — see [`SECURITY.md`](SECURITY.md)
+- Operator caveats — see [`docs/KNOWN_LIMITATIONS.md`](docs/KNOWN_LIMITATIONS.md)
+- Changelog — [`CHANGELOG.md`](CHANGELOG.md)
+
 ## Contributing
 
-PRs welcome. See [`docs/architecture.md`](docs/architecture.md) for the design and run `pytest` for tests.
+PRs welcome. See [`docs/CONTRIBUTING.md`](docs/CONTRIBUTING.md). Run `pytest`.
 
 ## License
 

@@ -60,5 +60,20 @@ audit.jsonl
 
 # Local config / secrets
 .env
-.env.local
+.env.*
+!.env.example
 *.local.yaml
+*.pem
+*.key
+id_rsa
+id_rsa.pub
+credentials.json
+service-account*.json
+
+# Runtime data
+approvals/
+spool/
+data/
+*.db
+*.sqlite
+*.sqlite3
