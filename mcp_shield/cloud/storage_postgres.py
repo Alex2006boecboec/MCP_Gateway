@@ -131,7 +131,9 @@ class PostgresStorage:
         try:
             conn = self._conn()
             try:
-                conn.execute("SELECT 1").fetchone()
+                with conn.cursor() as cur:
+                    cur.execute("SELECT 1")
+                    cur.fetchone()
                 return True
             finally:
                 self._put(conn)
@@ -142,7 +144,9 @@ class PostgresStorage:
         """Return the total number of orgs (for bootstrap check)."""
         conn = self._conn()
         try:
-            row = conn.execute("SELECT COUNT(*) AS c FROM orgs").fetchone()
+            with conn.cursor() as cur:
+                cur.execute("SELECT COUNT(*) AS c FROM orgs")
+                row = cur.fetchone()
             return row[0] if row else 0
         finally:
             self._put(conn)
