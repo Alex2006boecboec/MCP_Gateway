@@ -167,6 +167,30 @@ def test_url_validator_allows_public(tmp_path):
     assert d.action == "allow"
 
 
+@pytest.mark.parametrize("url", [
+    "http://2130706433/",          # decimal 127.0.0.1
+    "http://0x7f000001/",          # hex integer
+    "http://017700000001/",        # octal integer
+    "http://0177.0.0.1/",          # dotted with octal component
+    "http://0x7f.0.0.1/",           # dotted with hex component
+    "http://0x7f.1/",              # 2-part inet_aton form (127.0.0.1)
+    "http://127.1/",               # 2-part decimal form
+    "http://3232235521/",          # decimal 192.168.0.1
+    "http://0x0a000001/",          # hex 10.0.0.1
+])
+def test_url_validator_blocks_alternate_ip_encodings(tmp_path, url):
+    """SSRF bypass via decimal/hex/octal IP encodings must be blocked."""
+    engine = _engine(tmp_path, """
+        servers:
+          fetch:
+            tools:
+              fetch_url: {validate: url, block_internal: true}
+    """)
+    d = engine.evaluate(server="fetch", tool="fetch_url", arguments={"url": url})
+    assert d.action == "deny", f"expected deny for {url}, got {d.action}: {d.reason}"
+    assert "internal" in d.reason.lower()
+
+
 def test_path_validator_blocks_traversal(tmp_path):
     engine = _engine(tmp_path, """
         servers:

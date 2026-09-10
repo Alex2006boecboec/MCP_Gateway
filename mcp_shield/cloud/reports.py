@@ -144,6 +144,25 @@ def _fz152(events, summary, start, end):
     }
 
 
+def _csv_cell(value: Any) -> str:
+    """Render a value as a safe CSV cell, neutralizing formula injection.
+
+    Spreadsheet apps (Excel, LibreOffice, Google Sheets) interpret a leading
+    `=`, `+`, `-`, `@`, tab or carriage return as a formula. Prefix such cells
+    with a single quote and strip control chars so attacker-controlled tool /
+    server / approval names from audit events cannot execute formulas when an
+    admin exports a compliance report.
+    """
+    s = "" if value is None else str(value)
+    s = s.replace("\r", " ").replace("\t", " ")
+    if s and s[0] in ("=", "+", "-", "@"):
+        s = "'" + s
+    # Escape embedded double quotes per RFC 4180.
+    if '"' in s or "," in s or "\n" in s:
+        s = '"' + s.replace('"', '""') + '"'
+    return s
+
+
 def report_to_csv(report: dict[str, Any]) -> str:
     """Render a report dict as CSV text."""
     lines = [report["title"]]
@@ -152,14 +171,14 @@ def report_to_csv(report: dict[str, Any]) -> str:
     lines.append("Summary")
     lines.append("Metric,Value")
     for card in report["summary_cards"]:
-        lines.append(f"{card['label']},{card['value']}")
+        lines.append(f"{_csv_cell(card['label'])},{_csv_cell(card['value'])}")
     lines.append("")
     for section in report["rows"]:
         lines.append(section["category"])
         for item in section["items"]:
             if isinstance(item, tuple) and len(item) == 2:
-                lines.append(f"{item[0]},{item[1]}")
+                lines.append(f"{_csv_cell(item[0])},{_csv_cell(item[1])}")
             else:
-                lines.append(str(item))
+                lines.append(_csv_cell(item))
         lines.append("")
     return "\n".join(lines)

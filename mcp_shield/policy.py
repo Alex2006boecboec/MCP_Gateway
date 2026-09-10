@@ -224,11 +224,77 @@ class PolicyEngine:
         return None
 
     @staticmethod
+    def _coerce_ip(host: str):
+        """Best-effort parse of a host string into an IPv4Address, handling
+        the alternate encodings tools/agents use to bypass naive IP checks:
+        decimal integer ("2130706433"), hex ("0x7f000001"), octal
+        ("017700000001"), and dotted-with-octal/hex components
+        ("0177.0.0.1", "0x7f.0.0.1"). Returns an address object or None.
+        """
+        import ipaddress
+
+        def _parse_int(s: str):
+            # base-0 handles 0x/0o/0b and plain decimal.
+            try:
+                return int(s, 0)
+            except ValueError:
+                pass
+            # Legacy C-style octal: leading "0" with octal digits (no 0o prefix).
+            if len(s) > 1 and s[0] == "0" and all(c in "01234567" for c in s[1:]) and s[1:].isdigit():
+                try:
+                    return int(s, 8)
+                except ValueError:
+                    pass
+            return None
+
+        # Standard dotted/IPv6 first.
+        try:
+            return ipaddress.ip_address(host)
+        except ValueError:
+            pass
+        # Single integer in any base.
+        n = _parse_int(host)
+        if n is not None and 0 <= n < 2**32:
+            try:
+                return ipaddress.IPv4Address(n)
+            except (ValueError, ipaddress.AddressValueError):
+                pass
+        # Dotted form with per-component base-0/legacy-octal, 1-4 parts,
+        # matching inet_aton semantics (last part fills remaining bytes).
+        if 1 <= host.count(".") <= 3:
+            parts = host.split(".")
+            nums = []
+            ok = True
+            for p in parts:
+                v = _parse_int(p)
+                if v is None or v < 0:
+                    ok = False
+                    break
+                nums.append(v)
+            if ok:
+                try:
+                    if len(nums) == 4:
+                        if all(0 <= n < 256 for n in nums):
+                            return ipaddress.IPv4Address(bytes(nums))
+                    else:
+                        # Last part fills the remaining low-order bytes.
+                        head = nums[:-1]
+                        tail = nums[-1]
+                        tail_bytes = 4 - len(head)
+                        if all(0 <= n < 256 for n in head) and 0 <= tail < 2 ** (8 * tail_bytes):
+                            packed = bytes(head) + tail.to_bytes(tail_bytes, "big")
+                            return ipaddress.IPv4Address(packed)
+                except (ValueError, ipaddress.AddressValueError):
+                    return None
+        return None
+
+    @staticmethod
     def _looks_internal(value: str) -> bool:
         """Return True if value looks like an internal/metadata URL or host.
 
         Covers loopback, RFC1918 (10/8, 172.16/12, 192.168/16), link-local,
-        localhost, and cloud metadata endpoints.
+        localhost, and cloud metadata endpoints. Resists alternate IP
+        encodings (decimal/hex/octal) used to bypass naive checks.
         """
         import ipaddress
         from urllib.parse import urlparse
@@ -261,9 +327,8 @@ class PolicyEngine:
         if host.startswith("[") and host.endswith("]"):
             host = host[1:-1]
 
-        try:
-            ip = ipaddress.ip_address(host)
-        except ValueError:
+        ip = PolicyEngine._coerce_ip(host)
+        if ip is None:
             # Not an IP — check dotted prefixes for partial/unparsed hosts.
             if host.startswith(("10.", "127.", "192.168.", "169.254.")):
                 return True
