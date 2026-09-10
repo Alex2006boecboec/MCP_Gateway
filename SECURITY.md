@@ -27,8 +27,9 @@ We aim to acknowledge reports within a few days.
 
 ## What is intentionally public
 
-- Default bootstrap credentials `admin@mcp-shield.local` / `admin` for a **fresh**
-  self-hosted cloud dashboard (forced password change on first login).
+- First-run bootstrap creates an admin user with a **random one-time password**
+  printed once to server logs (not a fixed password in source). Override via
+  `MCP_SHIELD_BOOTSTRAP_EMAIL` / `MCP_SHIELD_BOOTSTRAP_PASSWORD` if needed.
 - AWS/GitHub/Slack **documentation example** strings in unit/smoke tests
   (e.g. `AKIAIOSFODNN7EXAMPLE`). These are not live credentials.
 

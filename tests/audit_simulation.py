@@ -42,25 +42,28 @@ def main():
     app = create_app(db_path, secret="audit-secret")
     client = TestClient(app)
     db = app.state.db
-    admin = db.get_user_by_email("admin@mcp-shield.local")
+    creds = app.state.bootstrap_credentials
+    assert creds, "bootstrap should create admin"
+    admin_email = creds["email"]
+    admin_password = creds["password"]
+    admin = db.get_user_by_email(admin_email)
     org_id = admin.org_id
-    admin_email = "admin@mcp-shield.local"
 
     # Run all test sections
     test_registration(client, db, org_id)
-    test_login(client, admin_email)
-    test_dashboard(client, db, org_id)
+    test_login(client, admin_email, admin_password)
+    test_dashboard(client, db, org_id, admin_email, admin_password)
     test_reports(client)
     test_users(client, db, org_id, admin_email)
     test_api_keys(client, db, org_id)
     test_audit(client)
-    test_settings(client, admin_email)
+    test_settings(client, admin_email, "AdminPass123!")
     test_password_reset(client, db, admin_email)
     test_ingest_api(client, db, org_id)
-    test_gdpr(client)
+    test_gdpr(client, admin_email)
     test_health(client)
     test_security_headers(client)
-    test_viewer_permissions(client, db, org_id)
+    test_viewer_permissions(client, db, org_id, admin_email)
 
     # Summary
     print(f"\n{'='*60}")
@@ -120,11 +123,11 @@ def test_registration(client, db, org_id):
     check("1e. No CSRF -> 403", r.status_code == 403)
 
 
-def test_login(client, admin_email):
+def test_login(client, admin_email, admin_password):
     section("2. LOGIN")
     login_limiter._buckets.clear()
     csrf = get_csrf(client)
-    r = do_login(client, admin_email, "admin", csrf)
+    r = do_login(client, admin_email, admin_password, csrf)
     check("2a. Valid login -> 302", r.status_code == 302)
 
     login_limiter._buckets.clear()
@@ -139,7 +142,7 @@ def test_login(client, admin_email):
 
     login_limiter._buckets.clear()
     client.get("/login")
-    r = client.post("/login", data={"email": admin_email, "password": "admin"}, follow_redirects=False)
+    r = client.post("/login", data={"email": admin_email, "password": admin_password}, follow_redirects=False)
     check("2d. No CSRF -> 403", r.status_code == 403)
 
     # Rate limit lockout
@@ -151,11 +154,11 @@ def test_login(client, admin_email):
     check("2e. Rate limit -> 429", r.status_code == 429)
 
 
-def test_dashboard(client, db, org_id):
+def test_dashboard(client, db, org_id, admin_email, admin_password):
     section("3. DASHBOARD")
     login_limiter._buckets.clear()
     csrf = get_csrf(client)
-    do_login(client, "admin@mcp-shield.local", "admin", csrf)
+    do_login(client, admin_email, admin_password, csrf)
 
     # Bootstrap admin has must_change_password=True — dashboard should redirect.
     r = client.get("/dashboard", follow_redirects=False)
@@ -164,7 +167,7 @@ def test_dashboard(client, db, org_id):
     # Change password to clear must_change_password.
     csrf = get_csrf(client)
     client.post("/settings", data={
-        "old_password": "admin", "new_password": "AdminPass123!",
+        "old_password": admin_password, "new_password": "AdminPass123!",
         "new_password_confirm": "AdminPass123!", "csrf_token": csrf,
     }, follow_redirects=False)
 
@@ -270,7 +273,7 @@ def test_audit(client):
     check("7a. Audit page (admin) -> 200", r.status_code == 200)
 
 
-def test_settings(client, admin_email):
+def test_settings(client, admin_email, admin_password):
     section("8. SETTINGS (password change)")
     check("8a. Settings page", client.get("/settings").status_code == 200)
 
@@ -280,12 +283,12 @@ def test_settings(client, admin_email):
     check("8b. Wrong old -> 400", r.status_code == 400)
 
     csrf = get_csrf(client)
-    r = client.post("/settings", data={"old_password": "admin", "new_password": "NewPass123!",
+    r = client.post("/settings", data={"old_password": admin_password, "new_password": "NewPass123!",
         "new_password_confirm": "Different!", "csrf_token": csrf}, follow_redirects=False)
     check("8c. Mismatch -> 400", r.status_code == 400)
 
     csrf = get_csrf(client)
-    r = client.post("/settings", data={"old_password": "admin", "new_password": "weak",
+    r = client.post("/settings", data={"old_password": admin_password, "new_password": "weak",
         "new_password_confirm": "weak", "csrf_token": csrf}, follow_redirects=False)
     check("8d. Weak new -> 400", r.status_code == 400)
 
@@ -351,12 +354,12 @@ def test_ingest_api(client, db, org_id):
         check("10f. Large batch -> 413", r.status_code == 413)
 
 
-def test_gdpr(client):
+def test_gdpr(client, admin_email):
     section("11. GDPR")
     # Re-login (session may be invalidated by password reset in section 9).
     login_limiter._buckets.clear()
     csrf = get_csrf(client)
-    do_login(client, "admin@mcp-shield.local", "BrandNewPass123!", csrf)
+    do_login(client, admin_email, "BrandNewPass123!", csrf)
     r = client.get("/org/export", follow_redirects=False)
     check("11a. Export -> 200", r.status_code == 200, f"got {r.status_code}")
     check("11b. Export is JSON", "application/json" in r.headers.get("content-type", ""))
@@ -385,7 +388,7 @@ def test_security_headers(client):
     check("13d. CSP", "default-src" in r.headers.get("content-security-policy", ""))
 
 
-def test_viewer_permissions(client, db, org_id):
+def test_viewer_permissions(client, db, org_id, admin_email):
     section("14. VIEWER PERMISSIONS (RBAC)")
     # Create a viewer with known password.
     from mcp_shield.cloud.auth import hash_password
@@ -408,7 +411,7 @@ def test_viewer_permissions(client, db, org_id):
     check("14e. Viewer audit -> 403", client.get("/audit").status_code == 403)
 
     # Viewer CANNOT delete users.
-    admin = db.get_user_by_email("admin@mcp-shield.local")
+    admin = db.get_user_by_email(admin_email)
     csrf = get_csrf(client)
     r = client.post(f"/users/{admin.id}/delete", data={"csrf_token": csrf}, follow_redirects=False)
     check("14f. Viewer delete user -> 403", r.status_code == 403)

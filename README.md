@@ -154,7 +154,7 @@ This is **optional** — the proxy works fully offline.
 ```bash
 pip install "mcp-shield[cloud]"
 mcp-shield-cloud   # → http://127.0.0.1:8000
-# First boot: admin@mcp-shield.local / admin  → change immediately
+# First boot prints a one-time admin password to stderr/logs — change it immediately.
 ```
 
 Then point a proxy with `--cloud-url` and `--cloud-key`.

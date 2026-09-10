@@ -47,10 +47,12 @@ def main():
     db: Database = app.state.db
 
     # Get the default org + admin from bootstrap.
-    # Find the default org via the admin user (works for SQLite + Postgres).
-    admin = db.get_user_by_email("admin@mcp-shield.local")
+    creds = app.state.bootstrap_credentials
+    assert creds, "bootstrap should create an admin on a fresh DB"
+    admin_email = creds["email"]
+    admin_password = creds["password"]
+    admin = db.get_user_by_email(admin_email)
     org_id = admin.org_id
-    admin_email = "admin@mcp-shield.local"
     # Create an API key for the proxy.
     api_key = db.create_api_key(org_id, "smoke-test-proxy")
     print(f"  Org: {org_id}")
@@ -106,7 +108,7 @@ def main():
     client.get("/login")
     csrf_token = client.cookies.get("mcp_shield_csrf", "")
     resp = client.post("/login", data={
-        "email": admin_email, "password": "admin", "csrf_token": csrf_token,
+        "email": admin_email, "password": admin_password, "csrf_token": csrf_token,
     }, follow_redirects=False)
     assert resp.status_code == 302, f"login failed: {resp.status_code}"
     print(f"  Dashboard login: OK")
@@ -115,7 +117,7 @@ def main():
     client.get("/login")
     csrf_token = client.cookies.get("mcp_shield_csrf", "")
     resp = client.post("/settings", data={
-        "old_password": "admin", "new_password": "SmokeTest123!",
+        "old_password": admin_password, "new_password": "SmokeTest123!",
         "new_password_confirm": "SmokeTest123!", "csrf_token": csrf_token,
     }, follow_redirects=False)
     assert resp.status_code == 302, f"password change failed: {resp.status_code}"

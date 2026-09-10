@@ -64,8 +64,8 @@ class DashboardUser(HttpUser):
         self.client.post(
             "/login",
             data={
-                "email": "admin@mcp-shield.local",
-                "password": "admin",
+                "email": "admin@localhost",
+                "password": "replace-me",
                 "csrf_token": "",  # would need to fetch from /login first
             },
         )

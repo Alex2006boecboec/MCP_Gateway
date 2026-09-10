@@ -8,15 +8,17 @@ Env vars:
   MCP_SHIELD_SESSION_SECRET - session cookie signing key (auto-generated if unset)
   MCP_SHIELD_HOST         - bind host (default: 127.0.0.1)
   MCP_SHIELD_PORT         - bind port (default: 8000)
+  MCP_SHIELD_BOOTSTRAP_EMAIL - first-run admin email (default: admin@localhost)
+  MCP_SHIELD_BOOTSTRAP_PASSWORD - optional fixed first-run password (default: random)
 
-On first run, if the DB is empty, a default admin org + user is created:
-  email: admin@mcp-shield.local
-  password: admin  (CHANGE IMMEDIATELY in production!)
+On first run (empty DB), a default admin org + user is created. The one-time
+password is printed to stderr and must be changed on first login.
 """
 
 from __future__ import annotations
 
 import os
+import secrets
 import sys
 
 from fastapi import FastAPI
@@ -44,6 +46,7 @@ def create_app(db_path: str | None = None, secret: str | None = None) -> FastAPI
     app = FastAPI(title="MCP Shield Cloud Dashboard", version="5.4.0")
     app.state.db = db
     app.state.session_manager = SessionManager(secret_key=secret)
+    app.state.bootstrap_credentials = None
 
     # Middleware order: outermost first (executed last on response).
     app.add_middleware(SecurityHeadersMiddleware)
@@ -54,7 +57,7 @@ def create_app(db_path: str | None = None, secret: str | None = None) -> FastAPI
     app.include_router(ingest_router)
     app.include_router(dashboard_router)
 
-    _bootstrap(db)
+    app.state.bootstrap_credentials = _bootstrap(db)
     _start_retention_task(db)
     return app
 
@@ -87,23 +90,28 @@ def _start_retention_task(db) -> None:
     thread.start()
 
 
-def _bootstrap(db) -> None:
-    """On first run, create a default admin org + user if no org exists."""
-    # Check if any org exists (uses Storage protocol, works for SQLite + Postgres).
+def _bootstrap(db) -> dict[str, str] | None:
+    """On first run, create a default admin org + user if no org exists.
+
+    Returns {"email", "password"} when bootstrap ran, else None.
+    Password is random unless MCP_SHIELD_BOOTSTRAP_PASSWORD is set (tests/ops).
+    """
     if db.count_orgs() > 0:
-        return
+        return None
+    email = os.environ.get("MCP_SHIELD_BOOTSTRAP_EMAIL", "admin@localhost").strip() or "admin@localhost"
+    password = os.environ.get("MCP_SHIELD_BOOTSTRAP_PASSWORD") or secrets.token_urlsafe(24)
     org = db.create_org("Default Org")
-    # Create admin with must_change_password=True to force a password change
-    # on first login (the default password "admin" is weak).
-    admin = db.create_user(org.id, "admin@mcp-shield.local", hash_password("admin"), "admin", must_change_password=True)
+    db.create_user(org.id, email, hash_password(password), "admin", must_change_password=True)
     db.create_api_key(org.id, "default")
     print("=" * 60, file=sys.stderr)
     print("  MCP Shield Cloud - first-run bootstrap complete.", file=sys.stderr)
     print(f"  Default org: {org.name} ({org.id})", file=sys.stderr)
-    print("  Admin login: admin@mcp-shield.local / admin", file=sys.stderr)
+    print(f"  Admin email: {email}", file=sys.stderr)
+    print(f"  One-time password: {password}", file=sys.stderr)
     print("  You will be REQUIRED to change this password on first login.", file=sys.stderr)
+    print("  This password is shown once — store it securely.", file=sys.stderr)
     print("=" * 60, file=sys.stderr)
-
+    return {"email": email, "password": password}
 
 def main():
     """Entry point: run the uvicorn server.

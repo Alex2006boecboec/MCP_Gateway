@@ -32,10 +32,10 @@ def get_csrf(c):
     c.get("/login")
     return c.cookies.get("mcp_shield_csrf", "")
 
-def login_admin(c, pw="admin"):
+def login_admin(c, email, pw):
     login_limiter._buckets.clear()
     csrf = get_csrf(c)
-    return c.post("/login", data={"email": "admin@mcp-shield.local", "password": pw, "csrf_token": csrf}, follow_redirects=False)
+    return c.post("/login", data={"email": email, "password": pw, "csrf_token": csrf}, follow_redirects=False)
 
 def change_pw(c, old, new):
     csrf = get_csrf(c)
@@ -46,14 +46,19 @@ def main():
     app = create_app(db_path, secret="a3-secret")
     client = TestClient(app)
     db = app.state.db
-    admin = db.get_user_by_email("admin@mcp-shield.local")
+    creds = app.state.bootstrap_credentials
+    assert creds
+    admin_email = creds["email"]
+    admin_password = creds["password"]
+    admin = db.get_user_by_email(admin_email)
     org_id = admin.org_id
 
     # === S-1: XSS fix ===
     section("S-1: XSS fix in users.html")
     # Login + change password first
-    login_admin(client)
-    change_pw(client, "admin", "AdminPass123!")
+    login_admin(client, admin_email, admin_password)
+    change_pw(client, admin_password, "AdminPass123!")
+    admin_password = "AdminPass123!"
     # Create user with XSS email
     db.create_user(org_id, "x';alert(1);'@test.com", hash_password("ViewerPass123!"), "viewer")
     r = client.get("/users")
@@ -69,7 +74,8 @@ def main():
     db2_path = tempfile.mktemp(suffix="_a3b.db")
     app2 = create_app(db2_path, secret="a3b-secret")
     c2 = TestClient(app2)
-    login_admin(c2)
+    creds2 = app2.state.bootstrap_credentials
+    login_admin(c2, creds2["email"], creds2["password"])
     # Should redirect to /settings
     r = c2.get("/dashboard", follow_redirects=False)
     check("dashboard -> 302", r.status_code == 302, f"got {r.status_code}")
@@ -89,8 +95,8 @@ def main():
     r = c2.get("/logout", follow_redirects=False)
     check("logout -> 302", r.status_code == 302)
     # Re-login after logout, then change password
-    login_admin(c2)
-    change_pw(c2, "admin", "NewPass1234!")
+    login_admin(c2, creds2["email"], creds2["password"])
+    change_pw(c2, creds2["password"], "NewPass1234!")
     r = c2.get("/dashboard", follow_redirects=False)
     check("dashboard after pw change -> 200", r.status_code == 200, f"got {r.status_code}")
 
@@ -133,7 +139,7 @@ def main():
     # === R-3: length limits ===
     section("R-3: org_name and label length limits")
     # Re-login as admin (register auto-logins may have changed session)
-    login_admin(client, "AdminPass123!")
+    login_admin(client, admin_email, "AdminPass123!")
     register_limiter._buckets.clear()
     csrf = get_csrf(client)
     long_name = "A" * 200
@@ -146,7 +152,7 @@ def main():
         check("org_name truncated to 100", len(org2.name) <= 100, f"got {len(org2.name)}")
 
     # Re-login as admin (register auto-logged in as long@test.com)
-    login_admin(client, "AdminPass123!")
+    login_admin(client, admin_email, "AdminPass123!")
     # Long label for API key
     csrf = get_csrf(client)
     long_label = "L" * 200
@@ -164,7 +170,7 @@ def main():
     logger = logging.getLogger("mcp_shield.cloud")
     logger.addHandler(log_handler)
     csrf = get_csrf(client)
-    r = client.post("/forgot", data={"email": "admin@mcp-shield.local", "csrf_token": csrf}, follow_redirects=False)
+    r = client.post("/forgot", data={"email": admin_email, "csrf_token": csrf}, follow_redirects=False)
     log_output = log_capture.getvalue()
     logger.removeHandler(log_handler)
     # Check that the full token is NOT in the logs

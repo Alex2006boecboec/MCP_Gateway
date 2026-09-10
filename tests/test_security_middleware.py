@@ -19,8 +19,19 @@ def app_client():
     db_path = tempfile.mktemp(suffix=".db")
     app = create_app(db_path, secret="test-secret-12345")
     client = TestClient(app)
+    client.bootstrap = app.state.bootstrap_credentials
     yield client
     app.state.db.close()
+
+
+def _bootstrap_login_data(client, **extra):
+    creds = client.bootstrap
+    data = {
+        "email": creds["email"],
+        "password": creds["password"],
+    }
+    data.update(extra)
+    return data
 
 
 # ----------------------------------------------------------- CSRF
@@ -36,26 +47,20 @@ class TestCSRF:
     def test_post_without_csrf_token_returns_403(self, app_client):
         c = app_client
         c.get("/login")  # get CSRF cookie
-        r = c.post("/login", data={"email": "admin@mcp-shield.local", "password": "admin"})
+        r = c.post("/login", data=_bootstrap_login_data(c))
         assert r.status_code == 403
 
     def test_post_with_wrong_csrf_token_returns_403(self, app_client):
         c = app_client
         c.get("/login")
-        r = c.post("/login", data={
-            "email": "admin@mcp-shield.local", "password": "admin",
-            "csrf_token": "wrong-token",
-        })
+        r = c.post("/login", data=_bootstrap_login_data(c, csrf_token="wrong-token"))
         assert r.status_code == 403
 
     def test_post_with_valid_csrf_token_passes_csrf(self, app_client):
         c = app_client
         c.get("/login")
         csrf = c.cookies.get("mcp_shield_csrf", "")
-        r = c.post("/login", data={
-            "email": "admin@mcp-shield.local", "password": "admin",
-            "csrf_token": csrf,
-        }, follow_redirects=False)
+        r = c.post("/login", data=_bootstrap_login_data(c, csrf_token=csrf), follow_redirects=False)
         # Should pass CSRF (may be 302 on success or 401 on bad creds, but NOT 403).
         assert r.status_code != 403
 
@@ -162,10 +167,7 @@ class TestCookieSecurity:
         c = app_client
         c.get("/login")
         csrf = c.cookies.get("mcp_shield_csrf", "")
-        r = c.post("/login", data={
-            "email": "admin@mcp-shield.local", "password": "admin",
-            "csrf_token": csrf,
-        }, follow_redirects=False)
+        r = c.post("/login", data=_bootstrap_login_data(c, csrf_token=csrf), follow_redirects=False)
         set_cookie = r.headers.get("set-cookie", "")
         assert "httponly" in set_cookie.lower()
         assert "samesite=lax" in set_cookie.lower()
@@ -188,10 +190,7 @@ class TestCookieSecurity:
         c = app_client
         c.get("/login")
         csrf = c.cookies.get("mcp_shield_csrf", "")
-        r = c.post("/login", data={
-            "email": "admin@mcp-shield.local", "password": "admin",
-            "csrf_token": csrf,
-        }, follow_redirects=False)
+        r = c.post("/login", data=_bootstrap_login_data(c, csrf_token=csrf), follow_redirects=False)
         set_cookie = r.headers.get("set-cookie", "")
         # Without HTTPS, cookie should NOT have Secure flag.
         # (httponly and samesite should still be there)
