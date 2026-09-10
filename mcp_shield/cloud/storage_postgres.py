@@ -52,6 +52,7 @@ CREATE TABLE IF NOT EXISTS events (
     id SERIAL PRIMARY KEY,
     org_id TEXT NOT NULL REFERENCES orgs(id),
     seq INTEGER,
+    -- proxy_id added by migration 006 for existing DBs; included here for fresh installs
     proxy_id TEXT NOT NULL DEFAULT '',
     ts TEXT,
     decision TEXT,
@@ -68,7 +69,10 @@ CREATE TABLE IF NOT EXISTS events (
 );
 CREATE INDEX IF NOT EXISTS events_org_ts ON events(org_id, ts);
 CREATE INDEX IF NOT EXISTS events_org_decision ON events(org_id, decision);
-CREATE UNIQUE INDEX IF NOT EXISTS events_org_proxy_seq_unique ON events(org_id, proxy_id, seq) WHERE seq IS NOT NULL;
+-- Unique (org_id, proxy_id, seq) is created by migration 006 — do NOT create it
+-- here. On existing DBs CREATE TABLE IF NOT EXISTS is a no-op, so the table may
+-- still lack proxy_id; creating the index in SCHEMA_SQL crashes boot before
+-- migrations can add the column.
 CREATE TABLE IF NOT EXISTS password_resets (
     token TEXT PRIMARY KEY,
     user_id TEXT NOT NULL REFERENCES users(id),
@@ -107,10 +111,13 @@ class PostgresStorage:
     def init_db(self) -> None:
         conn = self._conn()
         try:
+            # Bootstrap base tables (CREATE IF NOT EXISTS). Must not create
+            # indexes that depend on columns added later by migrations — on
+            # existing DBs the table already exists without those columns.
             with conn:
                 with conn.cursor() as cur:
                     cur.execute(SCHEMA_SQL)
-            # Apply migrations (for future schema changes).
+            # Apply additive schema changes (e.g. proxy_id + unique index).
             from mcp_shield.cloud.migrator import run_migrations
             run_migrations(conn)
         finally:
