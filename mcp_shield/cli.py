@@ -29,6 +29,7 @@ from __future__ import annotations
 
 import argparse
 import logging
+import os
 import sys
 from pathlib import Path
 from typing import Any
@@ -40,6 +41,32 @@ from mcp_shield.detector import DetectorConfig
 from mcp_shield.graph import GraphConfig
 from mcp_shield.proxy import Proxy, ProxyConfig
 from mcp_shield.shipper import CloudShipper, CloudShipperConfig
+
+
+def _bundled_default_policy() -> Path:
+    """Locate the bundled default policy.
+
+    When running as a PyInstaller-frozen binary, the policy is unpacked to
+    `sys._MEIPASS/policies/default.yaml`. When running from source or a pip
+    install, it lives at the repo/package root `policies/default.yaml`.
+    """
+    if getattr(sys, "frozen", False):  # PyInstaller onefile
+        base = getattr(sys, "_MEIPASS", os.path.dirname(sys.executable))
+        return Path(base) / "policies" / "default.yaml"
+    # Repo/source layout: <root>/policies/default.yaml (cli.py is in mcp_shield/).
+    return Path(__file__).resolve().parent.parent / "policies" / "default.yaml"
+
+
+def _default_audit_path() -> Path:
+    """Per-user audit log path: ~/.mcp-shield/audit.jsonl (created on demand)."""
+    home = Path.home()
+    d = home / ".mcp-shield"
+    try:
+        d.mkdir(parents=True, exist_ok=True)
+    except OSError:
+        # Fall back to cwd if home is not writable.
+        return Path("audit.jsonl")
+    return d / "audit.jsonl"
 
 
 def _load_approval_from_policy(policy_path: Path) -> dict[str, Any] | None:
@@ -126,8 +153,13 @@ def main(argv: list[str] | None = None) -> int:
         "Wraps an MCP server, intercepts tool calls, enforces policy, "
         "redacts secrets, and writes a tamper-evident audit log.",
     )
-    parser.add_argument("--policy", required=True, help="Path to the YAML policy file")
-    parser.add_argument("--audit", default="audit.jsonl", help="Path to the audit log JSONL file")
+    parser.add_argument("--policy", default=None,
+                        help="Path to the YAML policy file. If omitted, the "
+                        "bundled secure-by-default policy is used "
+                        "(policies/default.yaml).")
+    parser.add_argument("--audit", default=None,
+                        help="Path to the audit log JSONL file. If omitted, "
+                        "defaults to ~/.mcp-shield/audit.jsonl.")
     parser.add_argument("--fail-closed", action="store_true", default=False,
                         help="Deny by default when no rule matches (recommended for production)")
     parser.add_argument("--no-redact", action="store_true", default=False,
@@ -180,9 +212,16 @@ def main(argv: list[str] | None = None) -> int:
     if not cmd:
         parser.error("No MCP server command provided. Use `--` followed by the server command.")
 
+    # Resolve optional --policy / --audit to bundled / per-user defaults so
+    # a no-code user can run `mcp-shield -- <srv>` with zero configuration.
+    policy_path = Path(args.policy) if args.policy else _bundled_default_policy()
+    if not policy_path.exists():
+        parser.error(f"Policy file not found: {policy_path}. Provide one with --policy.")
+    audit_path = Path(args.audit) if args.audit else _default_audit_path()
+
     config = ProxyConfig(
-        policy_path=Path(args.policy),
-        audit_path=Path(args.audit),
+        policy_path=policy_path,
+        audit_path=audit_path,
         server_command=cmd,
         fail_closed=args.fail_closed,
         redact_secrets=not args.no_redact,
@@ -190,7 +229,7 @@ def main(argv: list[str] | None = None) -> int:
         graph_config=GraphConfig() if args.track_chains else None,
         approval_config=_build_approval_config(
             enabled=args.require_approval,
-            policy_path=Path(args.policy),
+            policy_path=policy_path,
             approval_dir=args.approval_dir,
             timeout=args.approval_timeout,
             webhook=args.approval_webhook,
