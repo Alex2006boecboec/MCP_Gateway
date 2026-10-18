@@ -20,6 +20,11 @@ jobs:
   build:
     name: Build ${{ matrix.os }}
     runs-on: ${{ matrix.runner }}
+    timeout-minutes: 20
+    # Intel-mac runners (macos-13) are chronically capacity-constrained on
+    # the free tier. Treat macos-x64 as best-effort: if it can't get a runner
+    # or fails, the release still ships with the other three binaries.
+    continue-on-error: ${{ matrix.os == 'macos-x64' }}
     strategy:
       fail-fast: false
       matrix:
