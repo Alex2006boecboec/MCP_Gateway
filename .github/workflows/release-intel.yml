@@ -1,0 +1,64 @@
+name: Release Intel Binary
+
+# Best-effort build of the Intel-mac (x64) `mcp-shield` binary, separate from
+# release-binaries.yml. GitHub's free-tier macos-13 runners are chronically
+# capacity-constrained: jobs often sit in the queue for 20+ minutes (and
+# queue time does NOT count toward timeout-minutes). Keeping this in the
+# main workflow blocked releases indefinitely.
+#
+# This workflow runs in parallel and attaches the Intel binary to the SAME
+# GitHub Release whenever a runner eventually becomes available. It never
+# blocks the main 3-binary release (Apple Silicon / Linux / Windows).
+#
+# Trigger: same as release-binaries.yml — push a v* tag.
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch: {}
+
+permissions:
+  contents: write
+
+jobs:
+  build-intel:
+    name: Build macos-x64 (best-effort)
+    runs-on: macos-13
+    timeout-minutes: 20
+    continue-on-error: true   # never fail the workflow; Intel is best-effort
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install build deps
+        run: |
+          python -m pip install --upgrade pip
+          pip install pyinstaller pyyaml jsonschema
+
+      - name: Build binary
+        run: pyinstaller mcp-shield.spec --noconfirm --clean
+
+      - name: Smoke test
+        run: |
+          chmod +x dist/mcp-shield
+          ./dist/mcp-shield --help
+          ./dist/mcp-shield -- echo ok || true
+
+      - name: Stage asset
+        run: |
+          mkdir -p staging
+          cp dist/mcp-shield staging/mcp-shield-macos-x64
+          chmod +x staging/mcp-shield-macos-x64
+
+      # Attach to the release by tag. softprops/action-gh-release uploads to
+      # the existing release if present, or creates one if not. fail_on_unmatched
+      # defaults to false, so a missing file is skipped, not a failure.
+      - name: Attach Intel binary to Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: staging/mcp-shield-macos-x64
+          generate_release_notes: true

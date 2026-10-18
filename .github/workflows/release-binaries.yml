@@ -1,9 +1,13 @@
 name: Release Binaries
 
-# Builds standalone `mcp-shield` binaries for macOS, Windows, and Linux
-# whenever a version tag (v*) is pushed, and attaches them to the GitHub
-# Release. The binary needs no Python install — no-code users just download
-# and run it.
+# Builds the standalone `mcp-shield` binaries for Apple Silicon, Linux, and
+# Windows whenever a version tag (v*) is pushed, and attaches them to the
+# GitHub Release. The binary needs no Python install — no-code users just
+# download and run it.
+#
+# The Intel-mac (x64) build lives in a SEPARATE workflow, release-intel.yml,
+# because GitHub's free-tier macos-13 runners are chronically
+# capacity-constrained and would otherwise block this release indefinitely.
 #
 # Trigger: push a tag like `v0.2.0` or `v0.2.0-alpha`.
 
@@ -20,11 +24,7 @@ jobs:
   build:
     name: Build ${{ matrix.os }}
     runs-on: ${{ matrix.runner }}
-    timeout-minutes: 20
-    # Intel-mac runners (macos-13) are chronically capacity-constrained on
-    # the free tier. Treat macos-x64 as best-effort: if it can't get a runner
-    # or fails, the release still ships with the other three binaries.
-    continue-on-error: ${{ matrix.os == 'macos-x64' }}
+    timeout-minutes: 15
     strategy:
       fail-fast: false
       matrix:
@@ -38,11 +38,6 @@ jobs:
             runner: macos-latest
             artifact: mcp-shield-macos-arm64
             asset_name: mcp-shield-macos-arm64
-            ext: ""
-          - os: macos-x64
-            runner: macos-13
-            artifact: mcp-shield-macos-x64
-            asset_name: mcp-shield-macos-x64
             ext: ""
           - os: windows
             runner: windows-latest
@@ -115,6 +110,5 @@ jobs:
           files: |
             artifacts/mcp-shield-linux-x64/*
             artifacts/mcp-shield-macos-arm64/*
-            artifacts/mcp-shield-macos-x64/*
             artifacts/mcp-shield-windows-x64/*
           generate_release_notes: true
